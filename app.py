@@ -13,6 +13,10 @@ import subprocess
 import platform
 import ipaddress
 import re
+import math
+from collections import defaultdict, deque
+from contextlib import contextmanager
+from configuracao import setting
 
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -36,14 +40,14 @@ from flask import (
 BASE_DIR = Path(__file__).resolve().parent
 
 DB_FILE = Path(
-    os.environ.get(
+    setting(
         "STI_DB_FILE",
         str(BASE_DIR / "monitor.db")
     )
 )
 
 NETWORK = ipaddress.ip_network(
-    os.environ.get(
+    setting(
         "NETWORK",
         "10.2.116.0/22"
     ),
@@ -52,45 +56,53 @@ NETWORK = ipaddress.ip_network(
 
 SCAN_INTERVAL = max(
     10,
-    int(os.environ.get("SCAN_INTERVAL", "30"))
+    int(setting("SCAN_INTERVAL", "30"))
 )
 
 OFFLINE_THRESHOLD = max(
     30,
-    int(os.environ.get("OFFLINE_THRESHOLD", "90"))
+    int(setting("OFFLINE_THRESHOLD", "90"))
 )
 
 MAX_WORKERS = min(
     100,
     max(
         1,
-        int(os.environ.get("MAX_WORKERS", "40"))
+        int(setting("MAX_WORKERS", "40"))
     )
 )
 
-ADMIN_PASSWORD = os.environ.get(
+ADMIN_PASSWORD = setting(
     "STI_ADMIN_PASSWORD", ""
 )
 
-AGENT_TOKEN = os.environ.get(
+AGENT_TOKEN = setting(
     "STI_AGENT_TOKEN", ""
 )
 
-SECRET_KEY = os.environ.get(
+SECRET_KEY = setting(
     "STI_SECRET_KEY", ""
 )
 
-HOST = os.environ.get(
+HOST = setting(
     "STI_HOST",
     "127.0.0.1"
 )
 
 PORT = int(
-    os.environ.get(
+    setting(
         "STI_PORT",
         "5000"
     )
 )
+
+if NETWORK.version != 4 or NETWORK.num_addresses > 4096:
+    raise ValueError("NETWORK deve ser IPv4 e conter no máximo 4096 endereços.")
+
+COMMAND_TTL = max(60, int(setting("COMMAND_TTL", "300")))
+COMMAND_RUNNING_TTL = max(COMMAND_TTL, int(setting("COMMAND_RUNNING_TTL", "3600")))
+login_attempts = defaultdict(deque)
+login_lock = threading.Lock()
 
 app = Flask(__name__)
 
@@ -99,7 +111,7 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Strict",
     SESSION_COOKIE_SECURE=(
-        os.environ.get(
+        setting(
             "STI_HTTPS",
             "false"
         ).lower() == "true"
@@ -128,6 +140,22 @@ scan_status = {
 }
 
 
+@app.after_request
+def security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "same-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; "
+        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    )
+    if not request.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 # ==========================================
 # FUNÇÕES AUXILIARES
 # ==========================================
@@ -141,14 +169,7 @@ def valid_ip(ip):
     try:
         address = ipaddress.ip_address(ip)
 
-        # Permite testes locais no mesmo computador
-        if address.is_loopback:
-            return True
-
-        return (
-            address.version == 4
-            and address in NETWORK
-        )
+        return address.version == 4 and (address.is_loopback or address in NETWORK)
 
     except ValueError:
         return False
@@ -168,10 +189,48 @@ def get_device_online(device):
     return elapsed <= OFFLINE_THRESHOLD
 
 
+def get_agent_online(device):
+    last = device.get("last_agent_seen")
+    return (device.get("agent_seen") is True and isinstance(last, datetime)
+            and (datetime.now() - last).total_seconds() <= OFFLINE_THRESHOLD)
+
+
+def validate_telemetry(data):
+    for field in ("name", "user", "os", "agent_version"):
+        if field in data and (not isinstance(data[field], str) or len(data[field]) > 120):
+            raise ValueError(f"Campo {field} inválido (texto de até 120 caracteres).")
+    hw = {}
+    for field in ("cpu", "ram_total", "ram_free", "disk_total", "disk_free", "uptime"):
+        value = data.get(field)
+        if value is not None:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"Campo {field} deve ser numérico.")
+            if value < 0 or value > 1e12 or not math.isfinite(value) or (field == "cpu" and value > 100):
+                raise ValueError(f"Campo {field} fora da faixa permitida.")
+        hw[field] = value
+    for kind in ("ram", "disk"):
+        total, free = hw[f"{kind}_total"], hw[f"{kind}_free"]
+        if total is not None and free is not None and free > total:
+            raise ValueError(f"Espaço livre de {kind} maior que o total.")
+    printers = data.get("printers", [])
+    if not isinstance(printers, list) or len(printers) > 30 or any(
+        not isinstance(item, str) or len(item) > 250 for item in printers
+    ):
+        raise ValueError("Lista de impressoras inválida.")
+    hw["printers"] = printers
+    capabilities = data.get("capabilities", ["msg"])
+    if not isinstance(capabilities, list) or any(
+        not isinstance(item, str) or item not in COMMAND_ALLOWED for item in capabilities
+    ):
+        raise ValueError("Capacidades do agente inválidas.")
+    return hw, sorted(set(capabilities))
+
+
 # ==========================================
 # BANCO DE DADOS
 # ==========================================
 
+@contextmanager
 def db_connect():
 
     conn = sqlite3.connect(
@@ -187,7 +246,11 @@ def db_connect():
         "PRAGMA journal_mode=WAL"
     )
 
-    return conn
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def init_db():
@@ -263,6 +326,14 @@ def init_db():
             ON command_jobs(ip, status)
         """)
 
+        # Migração aditiva: preserva bancos e inventários existentes.
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(device_state)")}
+        for column in ("last_agent_seen", "agent_version", "capabilities"):
+            if column not in columns:
+                conn.execute(f"ALTER TABLE device_state ADD COLUMN {column} TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_events(timestamp)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_ip ON audit_events(ip)")
+
     logger.info(
         "Banco de dados inicializado."
     )
@@ -320,15 +391,21 @@ def save_device(ip, device):
         with db_connect() as conn:
 
             conn.execute("""
-                INSERT OR REPLACE INTO device_state (
+                INSERT INTO device_state (
                     ip,
                     name,
                     user,
                     os,
                     hw,
-                    last_seen
+                    last_seen, last_agent_seen, agent_version, capabilities
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(ip) DO UPDATE SET
+                    name=excluded.name, user=excluded.user, os=excluded.os,
+                    hw=excluded.hw, last_seen=excluded.last_seen,
+                    last_agent_seen=excluded.last_agent_seen,
+                    agent_version=excluded.agent_version, capabilities=excluded.capabilities
+                WHERE excluded.last_seen >= device_state.last_seen
             """, (
                 ip,
                 device.get("name", ""),
@@ -337,7 +414,10 @@ def save_device(ip, device):
                 json.dumps(
                     device.get("hw", {})
                 ),
-                device["last_seen"].isoformat()
+                device["last_seen"].isoformat(),
+                device.get("last_agent_seen").isoformat() if device.get("last_agent_seen") else None,
+                device.get("agent_version", ""),
+                json.dumps(device.get("capabilities", []))
             ))
 
     except Exception:
@@ -358,7 +438,7 @@ def load_devices():
                 user,
                 os,
                 hw,
-                last_seen
+                last_seen, last_agent_seen, agent_version, capabilities
             FROM device_state
         """).fetchall()
 
@@ -366,7 +446,7 @@ def load_devices():
 
         for row in rows:
 
-            ip, name, user, os_name, hw_json, last_seen = row
+            ip, name, user, os_name, hw_json, last_seen, agent_last, agent_version, capabilities = row
 
             try:
 
@@ -374,9 +454,9 @@ def load_devices():
                     last_seen
                 )
 
-                hw = json.loads(
-                    hw_json or "{}"
-                )
+                hw = json.loads(hw_json or "{}")
+                if not isinstance(hw, dict) or not valid_ip(ip):
+                    continue
 
             except (ValueError, TypeError):
                 continue
@@ -395,7 +475,10 @@ def load_devices():
                     ).total_seconds()
                     <= OFFLINE_THRESHOLD
                 ),
-                "agent_seen": False
+                "agent_seen": False,
+                "last_agent_seen": None,
+                "agent_version": agent_version or "",
+                "capabilities": []
             }
 
     logger.info(
@@ -526,8 +609,8 @@ def agent_authenticated():
     return (
         bool(AGENT_TOKEN)
         and hmac.compare_digest(
-            token,
-            AGENT_TOKEN
+            token.encode("utf-8"),
+            AGENT_TOKEN.encode("utf-8")
         )
     )
 
@@ -540,6 +623,17 @@ def agent_authenticated():
 def login():
 
     if request.method == "POST":
+        peer = request.remote_addr or "unknown"
+        now = time.monotonic()
+        with login_lock:
+            for address in list(login_attempts):
+                while login_attempts[address] and login_attempts[address][0] <= now - 300:
+                    login_attempts[address].popleft()
+                if not login_attempts[address]:
+                    del login_attempts[address]
+            if len(login_attempts[peer]) >= 5:
+                return "Muitas tentativas. Aguarde 5 minutos.", 429, {"Retry-After": "300"}
+            login_attempts[peer].append(now)
 
         password = request.form.get(
             "password",
@@ -547,10 +641,12 @@ def login():
         )
 
         if ADMIN_PASSWORD and hmac.compare_digest(
-            password,
-            ADMIN_PASSWORD
+            password.encode("utf-8"),
+            ADMIN_PASSWORD.encode("utf-8")
         ):
 
+            with login_lock:
+                login_attempts.pop(peer, None)
             session.clear()
 
             session["admin"] = True
@@ -565,7 +661,7 @@ def login():
 
             return redirect("/")
 
-        time.sleep(0.3)
+        audit("seguranca", "login_falhou", "Senha administrativa inválida", ip=peer)
 
         return "Senha inválida", 401
 
@@ -807,9 +903,7 @@ def scan_network():
 
                 if ip in found:
 
-                    was_online = get_device_online(
-                        device
-                    )
+                    was_online = device.get("online", False)
 
                     if not was_online:
                         changes.append((
@@ -820,7 +914,7 @@ def scan_network():
 
                     device["online"] = True
                     device["latency"] = found[ip]
-                    device["last_seen"] = now
+                    device["last_seen"] = max(now, device["last_seen"])
 
                     to_save.append((
                         ip,
@@ -950,6 +1044,10 @@ def api_devices():
                 "user": device["user"],
                 "os": device["os"],
                 "hw": device.get("hw", {}),
+                "agent_online": get_agent_online(device),
+                "agent_version": device.get("agent_version", ""),
+                "capabilities": device.get("capabilities", []),
+                "last_agent_seen": device.get("last_agent_seen").isoformat() if device.get("last_agent_seen") else None,
                 "latency": device.get("latency", 0),
                 "seconds_ago": int(
                     max(0, elapsed)
@@ -1017,6 +1115,23 @@ COMMAND_TRANSITIONS = {
 # CRIAR COMANDO
 # ==========================================
 
+def expire_commands(conn):
+    now = datetime.now()
+    rows = conn.execute("""
+        SELECT id, ip, command, status FROM command_jobs
+        WHERE (status IN ('queued', 'delivered') AND requested_at < ?)
+           OR (status = 'accepted' AND updated_at < ?)
+    """, ((now - timedelta(seconds=COMMAND_TTL)).isoformat(),
+          (now - timedelta(seconds=COMMAND_RUNNING_TTL)).isoformat())).fetchall()
+    for job_id, ip, command, status in rows:
+        result = "Prazo excedido; execução não confirmada. Confira a máquina antes de reenviar."
+        conn.execute("UPDATE command_jobs SET status='expired', result=?, updated_at=? WHERE id=?",
+                     (result, now.isoformat(), job_id))
+        conn.execute("""INSERT INTO audit_events
+            (timestamp, category, ip, status, description) VALUES (?, 'comando', ?, 'expired', ?)""",
+            (now.isoformat(), ip, f"{command}: {result} ID: {job_id}"))
+
+
 def create_command(
     ip,
     command,
@@ -1030,6 +1145,7 @@ def create_command(
     with db_connect() as conn:
 
         conn.execute("BEGIN IMMEDIATE")
+        expire_commands(conn)
 
         existing = conn.execute("""
             SELECT id
@@ -1090,12 +1206,13 @@ def deliver_command(ip):
     with db_connect() as conn:
 
         conn.execute("BEGIN IMMEDIATE")
+        expire_commands(conn)
 
         row = conn.execute("""
-            SELECT id, command, message
+            SELECT id, command, message, status
             FROM command_jobs
             WHERE ip = ?
-              AND status = 'queued'
+              AND status IN ('queued', 'delivered')
             ORDER BY requested_at ASC
             LIMIT 1
         """, (ip,)).fetchone()
@@ -1103,7 +1220,7 @@ def deliver_command(ip):
         if not row:
             return None
 
-        job_id, command, message = row
+        job_id, command, message, previous_status = row
 
         conn.execute("""
             UPDATE command_jobs
@@ -1117,12 +1234,8 @@ def deliver_command(ip):
             job_id
         ))
 
-    audit(
-        "comando",
-        "entregue",
-        f"Comando {command} entregue. ID: {job_id}",
-        ip
-    )
+    if previous_status == "queued":
+        audit("comando", "entregue", f"Comando {command} entregue. ID: {job_id}", ip)
 
     return {
         "id": job_id,
@@ -1138,7 +1251,8 @@ def deliver_command(ip):
 def get_command(job_id):
 
     with db_connect() as conn:
-
+        conn.execute("BEGIN IMMEDIATE")
+        expire_commands(conn)
         row = conn.execute("""
             SELECT
                 id,
@@ -1213,6 +1327,11 @@ def api_agent():
             "error": "IP não autorizado"
         }), 403
 
+    try:
+        hw, capabilities = validate_telemetry(data)
+    except ValueError as error:
+        return jsonify(ok=False, error=str(error)), 400
+
     now = datetime.now()
 
     with lock:
@@ -1233,19 +1352,6 @@ def api_agent():
             or old.get("user")
             or ""
         )[:120]
-
-        hw = {
-            key: data.get(key)
-            for key in (
-                "cpu",
-                "ram_total",
-                "ram_free",
-                "disk_total",
-                "disk_free",
-                "uptime",
-                "printers"
-            )
-        }
 
         previous_seen = old.get(
             "last_seen"
@@ -1271,7 +1377,10 @@ def api_agent():
             "ip": ip,
             "name": name,
             "user": user,
-            "os": "Windows",
+            "os": data.get("os") or old.get("os") or "Windows",
+            "agent_version": data.get("agent_version", "legado"),
+            "capabilities": capabilities,
+            "last_agent_seen": now,
             "hw": hw,
             "latency": old.get(
                 "latency",
@@ -1365,7 +1474,9 @@ def api_command(ip):
 
     message = str(
         data.get("message") or ""
-    ).strip()[:500]
+    ).strip()
+    if len(message) > 500:
+        return jsonify(ok=False, error="Mensagem limitada a 500 caracteres"), 400
 
     if command == "msg" and not message:
 
@@ -1392,12 +1503,15 @@ def api_command(ip):
                 "error": "Agente não autenticado"
             }), 409
 
-        if not get_device_online(device):
+        if not get_agent_online(device):
 
             return jsonify({
                 "ok": False,
                 "error": "Agente indisponível"
             }), 409
+
+        if command not in device.get("capabilities", ["msg"]):
+            return jsonify(ok=False, error="Comando não habilitado neste agente"), 409
 
     job_id = create_command(
         ip,
@@ -1491,9 +1605,8 @@ def api_command_status():
 
     with db_connect() as conn:
 
-        conn.execute(
-            "BEGIN IMMEDIATE"
-        )
+        conn.execute("BEGIN IMMEDIATE")
+        expire_commands(conn)
 
         row = conn.execute("""
             SELECT status, command
@@ -1772,7 +1885,14 @@ registrar_relatorios(
 # INICIALIZAÇÃO
 # ==========================================
 
-if __name__ == "__main__":
+startup_lock = threading.Lock()
+initialized = False
+scanner_started = False
+
+
+def create_app(start_scanner=True):
+    """Inicialização explícita para execução direta ou WSGI, em um só processo."""
+    global initialized, scanner_started
 
     if not all((
         ADMIN_PASSWORD,
@@ -1785,14 +1905,19 @@ if __name__ == "__main__":
             "STI_AGENT_TOKEN e STI_SECRET_KEY."
         )
 
-    init_db()
+    with startup_lock:
+        if not initialized:
+            init_db()
+            load_devices()
+            initialized = True
+        if start_scanner and not scanner_started:
+            threading.Thread(target=scanner_loop, daemon=True, name="STI-Scanner").start()
+            scanner_started = True
+    return app
 
-    load_devices()
 
-    threading.Thread(
-        target=scanner_loop,
-        daemon=True
-    ).start()
+if __name__ == "__main__":
+    create_app()
 
     logger.info(
         "STI Command Center V3 iniciado."
@@ -1803,9 +1928,5 @@ if __name__ == "__main__":
         NETWORK
     )
 
-    app.run(
-        host=HOST,
-        port=PORT,
-        debug=False,
-        use_reloader=False
-    )
+    from waitress import serve
+    serve(app, host=HOST, port=PORT, threads=8)

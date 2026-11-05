@@ -1,0 +1,15 @@
+{
+  "STI_HOST": "0.0.0.0",
+  "STI_PORT": 5000,
+  "NETWORK": "10.2.116.0/22",
+  "STI_SERVER_IP": "10.2.116.121",
+  "STI_SERVER_PORT": 5000,
+  "STI_AGENT_TOKEN": "",
+  "STI_ADMIN_PASSWORD": "",
+  "STI_SECRET_KEY": "",
+  "STI_USE_HTTPS": false,
+  "STI_HTTPS": false,
+  "STI_ALLOW_POWER_COMMANDS": false,
+  "AGENT_INTERVAL": 30,
+  "RETRY_INTERVAL": 10
+}

@@ -2,7 +2,7 @@
 """
 ============================================
 STI COMMAND CENTER
-AGENTE WINDOWS V3.1 - CLIENTE
+AGENTE WINDOWS V3.2 - CLIENTE
 ============================================
 
 Executável independente, sem arquivo BAT.
@@ -19,7 +19,7 @@ Funções:
 - Instância única
 
 Comandos de desligar/reiniciar:
-DESATIVADOS POR SEGURANÇA
+DESATIVADOS POR PADRÃO; habilitação explícita por configuração externa
 ============================================
 """
 
@@ -32,6 +32,8 @@ import getpass
 import logging
 import platform
 import threading
+import sqlite3
+from contextlib import contextmanager
 
 from pathlib import Path
 from urllib.parse import urlparse
@@ -39,30 +41,31 @@ from logging.handlers import RotatingFileHandler
 
 import requests
 import psutil
+from configuracao import setting, positive_int
 
 
 # ============================================
 # 1 - CONFIGURAÇÕES DO SERVIDOR
 # ============================================
 
-VERSION = "3.1.0"
+VERSION = "3.2.0"
 
 # IP do computador onde está o app.py
-SERVER_IP = "10.2.116.121"
+SERVER_IP = setting("STI_SERVER_IP", "10.2.116.121")
 
-SERVER_PORT = 5000
+SERVER_PORT = positive_int("STI_SERVER_PORT", 5000, maximum=65535)
 
 # IMPORTANTE:
-# Insira o mesmo STI_AGENT_TOKEN do app.py.
+# Configure o mesmo STI_AGENT_TOKEN do servidor no JSON ou ambiente.
 # NÃO coloque a senha do administrador aqui.
 
-AGENT_TOKEN = "c6UQorazzqZlRTO6CTIHl1ornE28Ug07S0h6tkJ0PU4CUIc4soqTGS2soTXXXsms"
+AGENT_TOKEN = setting("STI_AGENT_TOKEN")
 
 # Tempo entre envios
-AGENT_INTERVAL = 30
+AGENT_INTERVAL = positive_int("AGENT_INTERVAL", 30)
 
 # Tempo entre tentativas em caso de falha
-RETRY_INTERVAL = 10
+RETRY_INTERVAL = positive_int("RETRY_INTERVAL", 10)
 
 # Tempo máximo de conexão
 CONNECT_TIMEOUT = 4
@@ -70,10 +73,10 @@ READ_TIMEOUT = 10
 
 # Teste inicial em rede local.
 # Para produção, configurar HTTPS.
-USE_HTTPS = False
+USE_HTTPS = setting("STI_USE_HTTPS", "false").lower() == "true"
 
-# Não permitir ações de energia.
-ALLOW_POWER_COMMANDS = False
+# Exige habilitação explícita para ações de energia.
+ALLOW_POWER_COMMANDS = setting("STI_ALLOW_POWER_COMMANDS", "false").lower() == "true"
 
 SCHEME = "https" if USE_HTTPS else "http"
 
@@ -230,8 +233,7 @@ def validar_configuracoes():
     ):
 
         logger.error(
-            "Configure AGENT_TOKEN no agente.py "
-            "antes de gerar o executável."
+            "Configure STI_AGENT_TOKEN no ambiente ou em sti-config.json."
         )
 
         return False
@@ -276,6 +278,18 @@ def obter_usuario():
 
     try:
 
+        try:
+            import win32ts
+            active = [item for item in win32ts.WTSEnumerateSessions()
+                      if item["State"] == win32ts.WTSActive]
+            if active:
+                session_id = active[0]["SessionId"]
+                user = win32ts.WTSQuerySessionInformation(None, session_id, win32ts.WTSUserName)
+                domain = win32ts.WTSQuerySessionInformation(None, session_id, win32ts.WTSDomainName)
+                if user:
+                    return f"{domain}\\{user}" if domain else user
+        except Exception:
+            logger.debug("Sessão Windows indisponível; usando usuário do processo.", exc_info=True)
         user = getpass.getuser()
 
         domain = os.environ.get(
@@ -360,7 +374,7 @@ def obter_impressoras():
         )
 
         return [
-            str(item[2])
+            str(item[2])[:250]
             for item in printers[:30]
             if len(item) > 2 and item[2]
         ]
@@ -434,12 +448,12 @@ def coletar_hardware():
 
         "disk_total": (
             round(disk.total / gb, 2)
-            if disk else 0
+            if disk else None
         ),
 
         "disk_free": (
             round(disk.free / gb, 2)
-            if disk else 0
+            if disk else None
         ),
 
         "uptime": uptime,
@@ -457,10 +471,12 @@ def coletar_dados():
     hardware = coletar_hardware()
 
     return {
-        "name": obter_hostname(),
+        "name": obter_hostname()[:120],
 
-        "user": obter_usuario(),
+        "user": obter_usuario()[:120],
 
+        "agent_version": VERSION,
+        "capabilities": ["msg"] + (["restart", "shutdown"] if ALLOW_POWER_COMMANDS else []),
         "os": (
             platform.system()
             + " "
@@ -498,11 +514,13 @@ def confirmar_comando(
             timeout=HTTP_TIMEOUT
         )
 
+        if response.status_code in (404, 409):
+            raise CommandClosed("Servidor encerrou ou expirou o comando; não será reexecutado.")
         response.raise_for_status()
 
         data = response.json()
 
-        if data.get("ok") is not True:
+        if not isinstance(data, dict) or data.get("ok") is not True:
 
             logger.error(
                 "Servidor recusou confirmação."
@@ -584,6 +602,33 @@ def exibir_mensagem(message):
 # 12 - EXECUTAR COMANDOS
 # ============================================
 
+def agendar_energia(command):
+    """Usa a API nativa sem fechar à força aplicativos com alterações pendentes."""
+    import win32api
+    import win32con
+    import win32security
+
+    token = win32security.OpenProcessToken(
+        win32api.GetCurrentProcess(), win32con.TOKEN_ADJUST_PRIVILEGES | win32con.TOKEN_QUERY
+    )
+    previous = None
+    try:
+        privilege = win32security.LookupPrivilegeValue(None, win32con.SE_SHUTDOWN_NAME)
+        previous = win32security.AdjustTokenPrivileges(
+            token, False, [(privilege, win32con.SE_PRIVILEGE_ENABLED)]
+        )
+        win32api.InitiateSystemShutdown(
+            None, "STI: ação solicitada pela administração. Salve seu trabalho.",
+            60, False, command == "restart"
+        )
+    finally:
+        try:
+            if previous is not None:
+                win32security.AdjustTokenPrivileges(token, False, previous)
+        finally:
+            token.Close()
+
+
 def executar_comando(
     command,
     message=""
@@ -615,18 +660,15 @@ def executar_comando(
 
         return exibir_mensagem(text)
 
-    # REINICIAR / DESLIGAR
+    # Nenhuma execução de shell livre; somente ações fixas e opt-in local.
     if command in ("restart", "shutdown"):
-
-        logger.warning(
-            "Comando de energia recusado."
-        )
-
-        return (
-            "rejected",
-            "Comandos de energia desativados "
-            "nesta versão do agente."
-        )
+        if not ALLOW_POWER_COMMANDS:
+            return "rejected", "Comandos de energia desativados neste agente."
+        try:
+            agendar_energia(command)
+            return "initiated", "Ação de energia agendada para 60 segundos; não confirma sua conclusão."
+        except Exception as error:
+            return "failed", str(error)[:500]
 
     return (
         "rejected",
@@ -638,108 +680,109 @@ def executar_comando(
 # 13 - PROCESSAMENTO EM THREAD
 # ============================================
 
-processed_commands = set()
+class CommandClosed(Exception):
+    """O servidor não aceita mais confirmações para este job."""
 
+
+JOURNAL_FILE = LOG_DIR.parent / "commands.db"
+processed_commands = set()  # Somente threads ativas; histórico fica no SQLite.
 processed_lock = threading.Lock()
 
 
-def executar_job(
-    command_id,
-    command,
-    message
-):
-
+@contextmanager
+def journal_connect():
+    conn = sqlite3.connect(str(JOURNAL_FILE), timeout=15)
     try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
-        logger.info(
-            "Comando recebido: %s (%s)",
-            command,
-            command_id
-        )
 
-        accepted = confirmar_comando(
-            command_id,
-            "accepted",
-            "Recebido pelo agente STI."
-        )
+def init_journal():
+    with journal_connect() as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS jobs (
+            id TEXT PRIMARY KEY, command TEXT NOT NULL, message TEXT NOT NULL,
+            stage TEXT NOT NULL, status TEXT NOT NULL DEFAULT '',
+            result TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL
+        )""")
+        # Um crash durante a ação tem resultado incerto: nunca repetir a ação.
+        conn.execute("""UPDATE jobs SET stage='result', status='failed',
+            result='Agente reiniciado durante execução; resultado incerto. Não reexecutado.',
+            updated_at=? WHERE stage='running'""", (time.time(),))
+        conn.execute("DELETE FROM jobs WHERE stage='acknowledged' AND updated_at < ?",
+                     (time.time() - 7 * 86400,))
 
-        if not accepted:
 
-            logger.error(
-                "Comando não executado porque "
-                "a confirmação falhou."
-            )
+def update_job(command_id, stage, status="", result=""):
+    with journal_connect() as conn:
+        conn.execute("UPDATE jobs SET stage=?, status=?, result=?, updated_at=? WHERE id=?",
+                     (stage, status, str(result)[:500], time.time(), command_id))
 
+
+def executar_job(command_id, command, message):
+    try:
+        with journal_connect() as conn:
+            row = conn.execute("SELECT stage, status, result FROM jobs WHERE id=?",
+                               (command_id,)).fetchone()
+        if not row or row[0] == "acknowledged":
             return
-
-        status, result = executar_comando(
-            command,
-            message
-        )
-
-        confirmed = confirmar_comando(
-            command_id,
-            status,
-            result
-        )
-
-        if not confirmed:
-
-            logger.error(
-                "Resultado do comando não confirmado."
-            )
-
+        stage, status, result = row
+        if stage == "received":
+            if not confirmar_comando(command_id, "accepted", "Recebido pelo agente STI."):
+                return  # O próximo heartbeat tentará novamente, sem perder o job.
+            update_job(command_id, "running")
+            try:
+                status, result = executar_comando(command, message)
+            except Exception as error:
+                logger.exception("Falha durante execução do comando.")
+                status, result = "failed", str(error)
+            update_job(command_id, "result", status, result)
+        elif stage == "running":
+            return
+        if confirmar_comando(command_id, status, result):
+            update_job(command_id, "acknowledged", status, result)
+    except CommandClosed as error:
+        logger.warning("Comando %s: %s", command_id, error)
+        update_job(command_id, "acknowledged", status or "expired", result or str(error))
     except Exception:
+        logger.exception("Falha ao processar comando; resultado mantido para nova tentativa.")
+    finally:
+        with processed_lock:
+            processed_commands.discard(command_id)
 
-        logger.exception(
-            "Falha inesperada no processamento."
-        )
+
+def retry_pending_commands():
+    with journal_connect() as conn:
+        rows = conn.execute("SELECT id, command, message FROM jobs WHERE stage IN ('received', 'result')").fetchall()
+    for command_id, command, message in rows:
+        with processed_lock:
+            if command_id in processed_commands:
+                continue
+            processed_commands.add(command_id)
+        threading.Thread(target=executar_job, args=(command_id, command, message),
+                         daemon=True, name="STI-Command").start()
 
 
 def processar_comando(data):
-
-    command_id = data.get(
-        "command_id"
-    )
-
-    command = data.get(
-        "command"
-    )
-
-    message = data.get(
-        "message"
-    ) or ""
-
+    command_id, command = data.get("command_id"), data.get("command")
     if not command_id or not command:
         return
-
-    with processed_lock:
-
-        if command_id in processed_commands:
-
-            logger.warning(
-                "Comando repetido ignorado: %s",
-                command_id
-            )
-
-            return
-
-        processed_commands.add(
-            command_id
-        )
-
-    # A mensagem não bloqueia os envios
-    # de CPU/RAM enquanto aguarda o usuário.
-    threading.Thread(
-        target=executar_job,
-        args=(
-            command_id,
-            command,
-            message
-        ),
-        daemon=True,
-        name="STI-Command"
-    ).start()
+    if not isinstance(command_id, str) or len(command_id) > 64:
+        logger.error("ID de comando inválido.")
+        return
+    if command not in ("msg", "restart", "shutdown"):
+        logger.error("Comando desconhecido recebido.")
+        return
+    message = data.get("message") or ""
+    if not isinstance(message, str) or len(message) > 500:
+        logger.error("Mensagem inválida recebida.")
+        return
+    with journal_connect() as conn:
+        conn.execute("""INSERT OR IGNORE INTO jobs
+            (id, command, message, stage, updated_at) VALUES (?, ?, ?, 'received', ?)""",
+            (command_id, command, message, time.time()))
+    retry_pending_commands()
 
 
 # ============================================
@@ -917,7 +960,7 @@ def iniciar_agente():
     )
 
     logger.info(
-        "Comandos de energia: BLOQUEADOS"
+        "Comandos de energia: %s", "HABILITADOS" if ALLOW_POWER_COMMANDS else "BLOQUEADOS"
     )
 
     logger.info(
@@ -933,6 +976,7 @@ def iniciar_agente():
     if not verificar_instancia_unica():
         return
 
+    init_journal()
     diagnosticar_rede()
 
     with requests.Session() as session_http:
@@ -941,6 +985,7 @@ def iniciar_agente():
 
             try:
 
+                retry_pending_commands()
                 payload = coletar_dados()
 
                 sucesso = comunicar_servidor(
@@ -992,7 +1037,13 @@ if __name__ == "__main__":
 
     try:
 
-        iniciar_agente()
+        if "--check" in sys.argv:
+            import json
+            if not validar_configuracoes():
+                raise SystemExit(1)
+            print(json.dumps(coletar_dados(), ensure_ascii=False, indent=2))
+        else:
+            iniciar_agente()
 
     except KeyboardInterrupt:
 

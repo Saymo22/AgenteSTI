@@ -9,7 +9,7 @@ Não altera o banco de dados.
 
 import csv
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import (
     request,
@@ -566,7 +566,7 @@ def build_where(filters):
 
     if filters["start"]:
         conditions.append(
-            "substr(timestamp, 1, 10) >= ?"
+            "timestamp >= ?"
         )
         params.append(
             filters["start"]
@@ -574,10 +574,10 @@ def build_where(filters):
 
     if filters["end"]:
         conditions.append(
-            "substr(timestamp, 1, 10) <= ?"
+            "timestamp < ?"
         )
         params.append(
-            filters["end"]
+            (datetime.strptime(filters["end"], "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
         )
 
     if filters["ip"]:
@@ -612,7 +612,7 @@ def safe_csv(value):
     """
     value = "" if value is None else str(value)
 
-    if value.lstrip().startswith(
+    if value.startswith(("\t", "\r", "\n")) or value.lstrip().startswith(
         ("=", "+", "-", "@")
     ):
         return "'" + value
