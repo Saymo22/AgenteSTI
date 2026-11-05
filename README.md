@@ -18,19 +18,38 @@ A rede padrão foi preservada: **10.2.116.0/22**, com os segmentos **116, 117, 1
 
 ## Estrutura
 
-| Arquivo | Finalidade |
-| --- | --- |
-| `app.py` | Servidor, scanner, inventário, autenticação e fila de comandos. |
-| `agente.py` | Agente Windows V3.2 com telemetria e confirmação de comandos. |
-| `configuracao.py` | Carregamento de JSON externo e variáveis de ambiente. |
-| `preparar_config.py` | Geração inicial dos arquivos locais e de novos segredos. |
-| `sti-config.example.json` | Referência das configurações, sem credenciais reais. |
-| `relatorios.py` | Auditoria filtrada e exportação de eventos. |
-| `templates/index.html` | Estrutura do painel. |
-| `static/painel.js` / `static/painel.css` | Comportamento e apresentação do painel. |
-| `static/vendor/` | Chart.js e sua licença. |
-| `tests/` | Testes automatizados do servidor, agente e painel. |
-| `STI_Agente_V3_2.spec` | Build Windows do agente atual. |
+```text
+AgenteSTI/
+├── app.py                      # Entrada do servidor no PyCharm / WSGI
+├── agente.py                   # Entrada do agente Windows
+├── preparar_config.py          # Entrada da preparação inicial
+├── requirements.txt            # Dependências de execução
+├── sti/
+│   ├── servidor/
+│   │   ├── app.py              # API, scanner, autenticação e fila
+│   │   ├── relatorios.py       # Relatórios e exportação
+│   │   ├── templates/          # Páginas HTML
+│   │   └── static/             # CSS, JavaScript, imagens e bibliotecas
+│   ├── agente/
+│   │   └── cliente.py          # Telemetria e comandos do agente
+│   └── comum/
+│       └── configuracao.py     # Configuração compartilhada
+├── scripts/
+│   └── preparar_config.py      # Geração dos arquivos locais
+├── config/
+│   └── sti-config.example.json # Exemplo sem credenciais
+├── requirements/
+│   ├── dev.txt                 # Dependências para build
+│   └── windows-lock.txt        # Versões validadas no Windows
+├── packaging/
+│   ├── STI_Agente_V3_2.spec     # Build atual
+│   └── legacy/                 # Especificações antigas
+└── tests/                      # Testes Python e JavaScript
+```
+
+Os três arquivos de entrada na raiz são pequenos inicializadores; a implementação fica em `sti/`. Isso mantém os nomes usados nas configurações de execução do PyCharm. Os URLs `/static/...` e as rotas do painel permanecem iguais.
+
+O `monitor.db`, o `sti-config.json` do servidor e o `agent-config.json` continuam na raiz local para preservar a instalação existente. O código resolve esses caminhos a partir da raiz do projeto, mesmo quando iniciado de outro diretório. No executável, o JSON continua sendo lido ao lado do `.exe`.
 
 Banco, configurações com segredos, ambiente virtual, cache, `.idea/`, `build/` e `dist/` são locais e ficam fora do versionamento. Os arquivos antigos continuam existindo no histórico Git; o token anteriormente publicado deve ser substituído em todos os agentes.
 
@@ -40,7 +59,7 @@ Use Python **3.12** para reproduzir o ambiente validado nesta entrega. O agente 
 
 1. Abra a pasta do projeto no PyCharm.
 2. Configure o interpretador do projeto para um ambiente virtual. Nesta cópia local, foi preparado `.venv\Scripts\python.exe`.
-3. Instale `requirements.txt` com esse interpretador. Para gerar executáveis, use `requirements-dev.txt`.
+3. Instale `requirements.txt` com esse interpretador. Para gerar executáveis, use `requirements/dev.txt`.
 4. Crie configurações de execução separadas para `preparar_config.py`, `app.py` e `agente.py`, com a pasta do projeto como diretório de trabalho.
 
 Pelo terminal PowerShell, uma instalação nova pode ser feita assim:
@@ -50,7 +69,7 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-`requirements-lock.txt` registra as versões exatas usadas nos testes e no build Windows/Python 3.12. Para reproduzir o ambiente completo, instale esse arquivo em um ambiente virtual novo. Ele também inclui as ferramentas de build.
+`requirements/windows-lock.txt` registra as versões exatas usadas nos testes e no build Windows/Python 3.12. Para reproduzir o ambiente completo, instale esse arquivo em um ambiente virtual novo. Ele também inclui as ferramentas de build.
 
 ## Preparar a configuração
 
@@ -69,7 +88,7 @@ O script não sobrescreve configurações existentes. Na cópia local desta entr
 
 **Não distribua o `sti-config.json` do servidor aos usuários.** Para os computadores dos usuários, copie `agent-config.json` e renomeie a cópia para `sti-config.json` ao lado do executável.
 
-As variáveis de ambiente têm prioridade sobre o JSON. `STI_CONFIG_FILE` permite apontar para outro arquivo. Sem essa variável, o JSON é procurado junto ao código ou ao executável empacotado. Não há leitura automática de `.env`.
+As variáveis de ambiente têm prioridade sobre o JSON. `STI_CONFIG_FILE` permite apontar para outro arquivo. Sem essa variável, o JSON é procurado na raiz do projeto ou junto ao executável empacotado. Não há leitura automática de `.env`.
 
 ## Iniciar o servidor
 
@@ -160,11 +179,11 @@ Ao exceder o prazo, o job passa para `expired`, libera a fila e registra que a e
 No Windows:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm STI_Agente_V3_2.spec
+.\.venv\Scripts\python.exe -m pip install -r requirements/dev.txt
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm packaging/STI_Agente_V3_2.spec
 ```
 
-Saída: `dist\STI_Agente_V3_2.exe`. O console fica habilitado para diagnóstico. Os `.spec` antigos permanecem como alternativas de nome; use V3.2 para a distribuição atual. O JSON com credenciais não é embutido no build.
+Saída: `dist\STI_Agente_V3_2.exe`. O console fica habilitado para diagnóstico. Os `.spec` antigos ficam em `packaging/legacy/` como alternativas de nome; use V3.2 para a distribuição atual. O JSON com credenciais não é embutido no build.
 
 ## APIs e relatórios
 
@@ -201,6 +220,6 @@ Não houve implantação nem teste nas máquinas reais dos usuários. Antes de d
 - Faça backup e restrinja acesso ao banco e aos arquivos de configuração. O histórico ainda não possui retenção automática.
 - HTTP continua disponível para a rede interna. Para criptografar credenciais e telemetria, configure um endpoint HTTPS; ativar as flags isoladamente não cria certificado nem TLS. O servidor identifica agentes pelo IP da conexão direta. Um proxy que oculte esse IP exige adaptar a identificação antes de usá-lo.
 - Não publique configurações reais nem reutilize o token que aparecia no código antigo. Os arquivos gerados usam um novo token; atualize os agentes junto com o servidor.
-- O repositório não define uma licença própria. A licença do Chart.js está em `static/vendor/Chart.js-LICENSE.md`.
+- O repositório não define uma licença própria. A licença do Chart.js está em `sti/servidor/static/vendor/Chart.js-LICENSE.md`.
 
 Referências: [execução com Waitress na documentação do Flask](https://flask.palletsprojects.com/en/stable/deploying/waitress/) e [Chart.js 4.5.1](https://github.com/chartjs/Chart.js/tree/v4.5.1).

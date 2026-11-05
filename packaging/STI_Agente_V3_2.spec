@@ -1,6 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
+from pathlib import Path
+
+PROJECT_ROOT = Path(SPECPATH).resolve().parents[0]
+
 a = Analysis(
-    ['agente.py'], pathex=[], binaries=[], datas=[],
+    [str(PROJECT_ROOT / 'agente.py')], pathex=[str(PROJECT_ROOT)], binaries=[], datas=[],
     hiddenimports=['win32print', 'win32ts'], hookspath=[], hooksconfig={},
     runtime_hooks=[], excludes=[], noarchive=False, optimize=0,
 )

@@ -14,7 +14,7 @@ function loadPanel() {
     } },
     sessionStorage: {getItem: () => null, setItem: () => {}},
   });
-  const source = fs.readFileSync(path.join(__dirname, '../static/painel.js'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '../sti/servidor/static/painel.js'), 'utf8');
   vm.runInContext(source.replace(/\s+init\(\);\s*$/, ''), context);
   return {run: code => vm.runInContext(code, context), nodes};
 }

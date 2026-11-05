@@ -19,10 +19,10 @@ os.environ.update({
     "STI_SECRET_KEY": "test-only-session-secret", "LOCALAPPDATA": str(WORK),
 })
 
-import app as server
-import agente
+from sti.servidor import app as server
+from sti.agente import cliente as agente
 import requests
-from preparar_config import preparar
+from scripts.preparar_config import preparar
 
 
 class IntegrationTests(unittest.TestCase):

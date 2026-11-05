@@ -1,9 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 
+from pathlib import Path
+
+PROJECT_ROOT = Path(SPECPATH).resolve().parents[1]
+
 a = Analysis(
-    ['agente.py'],
-    pathex=[],
+    [str(PROJECT_ROOT / 'agente.py')],
+    pathex=[str(PROJECT_ROOT)],
     binaries=[],
     datas=[],
     hiddenimports=[],
