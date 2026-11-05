@@ -77,6 +77,19 @@ class IntegrationTests(unittest.TestCase):
         for route in ("/api/devices", "/api/events", "/api/history", "/relatorios", "/api/report/events.csv"):
             self.assertEqual(anonymous.get(route).status_code, 401)
 
+    def test_panel_loads_local_scripts_and_agent_fields(self):
+        page = self.client.get("/").get_data(as_text=True)
+        self.assertIn('src="/static/painel.js"', page)
+        self.assertIn('src="/static/vendor/chart.umd.min.js"', page)
+        self.assertIn('href="/static/painel.css"', page)
+        self.assertIn('id="modalAgentField"', page)
+        self.assertIn('id="modalPrintersField"', page)
+        self.assertNotIn('<script>', page)
+        for path in ("/static/painel.js", "/static/painel.css", "/static/vendor/chart.umd.min.js"):
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 200)
+            response.close()
+
     def test_telemetry_persists_os_metrics_and_capabilities(self):
         self.assertEqual(self.heartbeat().status_code, 200)
         item = self.client.get("/api/devices").json["devices"][0]
