@@ -926,6 +926,46 @@ def diagnosticar_rede():
     return False
 
 
+
+# ============================================
+# STI - OCULTAR CONSOLE APÓS INICIALIZAÇÃO
+# ============================================
+
+def ocultar_console():
+
+    # Não esconder o terminal do PyCharm
+    if not getattr(sys, "frozen", False):
+        return
+
+    if platform.system() != "Windows":
+        return
+
+    try:
+        kernel32 = ctypes.windll.kernel32
+        user32 = ctypes.windll.user32
+
+        kernel32.GetConsoleWindow.restype = ctypes.c_void_p
+
+        janela = kernel32.GetConsoleWindow()
+
+        if janela:
+            # SW_HIDE = 0
+            user32.ShowWindow(
+                ctypes.c_void_p(janela),
+                0
+            )
+
+            logger.info(
+                "Console ocultado. "
+                "Agente continua em segundo plano."
+            )
+
+    except Exception:
+        logger.exception(
+            "Erro ao ocultar console."
+        )
+
+
 # ============================================
 # 16 - INICIAR AGENTE
 # ============================================
@@ -981,6 +1021,8 @@ def iniciar_agente():
 
     with requests.Session() as session_http:
 
+        primeira_execucao = True
+
         while True:
 
             try:
@@ -992,6 +1034,26 @@ def iniciar_agente():
                     session_http,
                     payload
                 )
+
+
+                # Mostrar o resultado inicial
+                # por 4 segundos e ocultar a janela.
+                if primeira_execucao:
+
+                    primeira_execucao = False
+
+                    logger.info(
+                        "Agente inicializado."
+                    )
+
+                    logger.info(
+                        "Continuando em segundo plano..."
+                    )
+
+                    time.sleep(4)
+
+                    ocultar_console()
+
 
                 if sucesso:
 
