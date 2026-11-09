@@ -71,7 +71,7 @@
         <div class="toolbar">
           <div class="search-wrap">
             <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
-            <input id="searchInput" type="text" placeholder="Buscar dispositivo, IP, sistema ou usuário..." />
+            <input id="searchInput" type="text" placeholder="Buscar máquina, setor, sala ou responsável..." aria-label="Buscar no inventário" />
           </div>
           <div class="toolbar-actions">
             <button class="tool-btn" id="btnExport">
@@ -239,6 +239,17 @@
                   <span class="legend-pill"><span class="legend-dot" style="background:var(--amber)"></span>Latência</span>
                 </div>
               </div>
+              <div class="organization-filters" aria-label="Organização das máquinas">
+                <label>Setor<select id="filterDepartment"><option value="">Todos os setores</option></select></label>
+                <label>Sala<select id="filterRoom"><option value="">Todas as salas</option></select></label>
+                <label>Responsável<select id="filterResponsible"><option value="">Todos os responsáveis</option></select></label>
+                <label>Agrupar por<select id="organizationGroupBy">
+                  <option value="">Sem agrupamento</option><option value="department">Setor</option>
+                  <option value="room">Sala</option><option value="responsible">Responsável</option>
+                </select></label>
+                <button type="button" class="tool-btn" id="clearOrganizationFilters">Limpar filtros</button>
+                <p id="organizationResultCount" aria-live="polite"></p>
+              </div>
               <div class="devices-grid" id="devicesGrid"></div>
             </article>
             <aside class="overview-side-stack" aria-label="Saúde da Rede e Segmentos">
@@ -376,6 +387,21 @@
         <button class="modal-close" id="modalClose">×</button>
       </div>
 
+      <form id="organizationForm" class="organization-form">
+        <fieldset id="organizationFieldset">
+          <legend>Localização e responsável</legend>
+          <p>Cadastro administrativo da máquina. O responsável pode ser diferente do usuário conectado.</p>
+          <div class="organization-fields">
+            <label for="organizationDepartment">Setor<input id="organizationDepartment" name="department" maxlength="120" autocomplete="off" placeholder="Ex.: Financeiro"></label>
+            <label for="organizationRoom">Sala<input id="organizationRoom" name="room" maxlength="120" autocomplete="off" placeholder="Ex.: Sala 204"></label>
+            <label for="organizationResponsible">Responsável<input id="organizationResponsible" name="responsible" maxlength="120" autocomplete="off" placeholder="Ex.: Maria Silva"></label>
+          </div>
+          <div class="organization-save-row">
+            <button type="submit" class="tool-btn primary" id="saveOrganization">Salvar cadastro</button>
+            <span id="organizationSaveStatus" role="status" aria-live="polite"></span>
+          </div>
+        </fieldset>
+      </form>
       <div class="modal-grid">
         <div class="modal-card">
           <h4>Informações da Máquina</h4>

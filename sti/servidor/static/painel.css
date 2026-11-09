@@ -1424,3 +1424,27 @@
 
 .modal-action:disabled { opacity: .45; cursor: not-allowed; }
 .modal-info-row strong { overflow-wrap: anywhere; }
+
+.organization-filters, .organization-fields {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); gap: 12px;
+}
+.organization-filters { margin-bottom: 22px; align-items: end; }
+.organization-filters label, .organization-fields label { display: grid; gap: 8px; color: var(--muted); font-size: .85rem; min-width: 0; }
+.organization-filters select, .organization-fields input {
+  width: 100%; min-width: 0; min-height: 44px; padding: 10px; border: 1px solid var(--stroke-strong);
+  border-radius: 10px; background: var(--bg); color: var(--text); font: inherit; color-scheme: dark;
+}
+.organization-fields input:focus, .organization-filters select:focus { outline: 2px solid var(--cyan); outline-offset: 2px; }
+#organizationResultCount { grid-column: 1 / -1; color: var(--muted); font-size: .85rem; }
+.organization-form { margin: 0 0 22px; }
+.organization-form fieldset { padding: 18px; border: 1px solid var(--stroke-strong); border-radius: 18px; min-width: 0; }
+.organization-form legend { font-weight: 800; padding: 0 8px; }
+.organization-form p { color: var(--muted); font-size: .85rem; margin-bottom: 16px; line-height: 1.5; }
+.organization-save-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+#organizationSaveStatus { font-size: .85rem; color: var(--muted); overflow-wrap: anywhere; }
+.organization-summary { display: grid; gap: 8px; margin-top: 14px; border-top: 1px solid var(--stroke); padding-top: 14px; }
+.organization-summary div { display: grid; grid-template-columns: 90px 1fr; gap: 10px; font-size: .85rem; }
+.organization-summary dt { color: var(--muted); }
+.organization-summary dd { margin: 0; overflow-wrap: anywhere; }
+.device-group-heading { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 10px; padding: 14px 0; border-bottom: 1px solid var(--stroke); overflow-wrap: anywhere; }
+.device-group-heading span { color: var(--muted); font-size: .85rem; font-weight: 500; }

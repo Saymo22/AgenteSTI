@@ -77,6 +77,98 @@ class IntegrationTests(unittest.TestCase):
         for route in ("/api/devices", "/api/events", "/api/history", "/relatorios", "/api/report/events.csv"):
             self.assertEqual(anonymous.get(route).status_code, 401)
 
+    def organization(self, changes, ip=None, client=None):
+        return (client or self.client).patch(f"/api/devices/{ip or self.ip}/organization", json=changes)
+
+    def test_organization_default_and_authenticated_edit(self):
+        self.heartbeat()
+        item = self.client.get('/api/devices').json['devices'][0]
+        self.assertEqual(item['organization']['department'], '')
+        anonymous = server.app.test_client()
+        self.assertEqual(self.organization({'room': '101'}, client=anonymous).status_code, 401)
+        response = self.client.patch(f'/api/devices/{self.ip}/organization', json={'room':'101'}, headers={'Origin':'https://outro.example'})
+        self.assertEqual(response.status_code, 403)
+        response = self.organization({'department':'Financeiro', 'room':'Sala 101', 'responsible':'Maria Silva'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['organization']['responsible'], 'Maria Silva')
+        self.assertTrue(response.json['organization']['updated_at'])
+
+    def test_organization_survives_agent_scanner_and_restart(self):
+        self.heartbeat()
+        self.organization({'department':'TI', 'room':'204', 'responsible':'João'})
+        self.heartbeat({**self.payload, 'organization':{'department':'Indevido'}})
+        import ipaddress
+        with patch.object(server, 'NETWORK', ipaddress.ip_network('10.2.116.32/30')), patch.object(server, 'ping_host', return_value=(True, 1)):
+            server.scan_network()
+        server.devices.clear()
+        server.load_devices()
+        devices = self.client.get('/api/devices').json['devices']
+        item = next(device for device in devices if device['ip'] == self.ip)
+        self.assertEqual(item['organization']['department'], 'TI')
+        self.assertEqual(item['organization']['room'], '204')
+        self.assertEqual(item['organization']['responsible'], 'João')
+        self.assertEqual(item['hw']['cpu'], 12.5)
+
+    def test_organization_partial_clear_and_no_duplicate_audit(self):
+        self.heartbeat()
+        self.organization({'department':'  Financeiro  ', 'room':'204', 'responsible':'Maria'})
+        response = self.organization({'room':''})
+        self.assertEqual(response.json['organization']['department'], 'Financeiro')
+        self.assertEqual(response.json['organization']['room'], '')
+        self.assertEqual(response.json['organization']['responsible'], 'Maria')
+        revision = response.json['organization']['updated_at']
+        response = self.organization({'room':''})
+        self.assertEqual(response.json['organization']['updated_at'], revision)
+        events = self.client.get('/api/events?category=inventario').json['events']
+        self.assertEqual(len(events), 2)
+        self.assertEqual(self.client.get('/relatorios?category=inventario').status_code, 200)
+
+    def test_organization_edit_offline_and_conflicting_revision(self):
+        self.heartbeat()
+        server.devices[self.ip]['last_seen'] -= timedelta(days=1)
+        first = self.organization({'department':'TI', 'expected_updated_at':''})
+        self.assertEqual(first.status_code, 200)
+        revision = first.json['organization']['updated_at']
+        self.assertEqual(self.organization({'department':'Outro', 'expected_updated_at':''}).status_code, 409)
+        response = self.organization({'room':'303', 'expected_updated_at':revision})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['organization']['department'], 'TI')
+
+    def test_organization_concurrent_saves_do_not_overwrite_each_other(self):
+        self.heartbeat()
+        def save(department):
+            client = server.app.test_client()
+            with client.session_transaction() as session:
+                session['admin'] = True
+            return self.organization({'department':department, 'expected_updated_at':''}, client=client).status_code
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            statuses = list(executor.map(save, ['Financeiro', 'TI']))
+        self.assertEqual(sorted(statuses), [200, 409])
+
+    def test_organization_validation_and_known_devices(self):
+        self.heartbeat()
+        for payload in ({}, [], {'room':None}, {'room':True}, {'room':[]}, {'room':42}, {'room':'a'*121},
+                        {'room':'A\x00B'}, {'ip':'10.2.117.1'}, {'room':'1', 'admin':True}, {'room':'1','expected_updated_at':42}):
+            self.assertEqual(self.organization(payload).status_code, 400, payload)
+        self.assertEqual(self.organization({'room':'1'}, ip='10.2.120.1').status_code, 400)
+        self.assertEqual(self.organization({'room':'1'}, ip='10.2.116.99').status_code, 404)
+
+    def test_organization_schema_migrates_old_database_without_touching_inventory(self):
+        old_path = self.folder / 'before-organization.db'
+        with closing(sqlite3.connect(old_path)) as conn, conn:
+            conn.execute('CREATE TABLE device_state (ip TEXT PRIMARY KEY, name TEXT, user TEXT, os TEXT, hw TEXT, last_seen TEXT)')
+            conn.execute('INSERT INTO device_state VALUES (?, ?, ?, ?, ?, ?)',
+                         (self.ip, 'Legado', 'usuario', 'Windows', '{}', datetime.now().isoformat()))
+        with patch.object(server, 'DB_FILE', old_path):
+            server.init_db()
+            server.init_db()
+            server.devices.clear()
+            server.load_devices()
+            item = self.client.get('/api/devices').json['devices'][0]
+            self.assertEqual(item['name'], 'Legado')
+            self.assertEqual(item['organization']['department'], '')
+            self.assertEqual(self.organization({'department':'Setor legado'}).status_code, 200)
+
     def test_panel_loads_local_scripts_and_agent_fields(self):
         page = self.client.get("/").get_data(as_text=True)
         self.assertIn('src="/static/painel.js"', page)
