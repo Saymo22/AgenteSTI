@@ -10,6 +10,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class StructureTests(unittest.TestCase):
+    def test_example_config_has_no_credentials(self):
+        example = json.loads((ROOT / 'config' / 'sti-config.example.json').read_text(encoding='utf-8-sig'))
+        for field in ('STI_ADMIN_PASSWORD', 'STI_AGENT_TOKEN', 'STI_SECRET_KEY'):
+            self.assertEqual(example[field], '')
+
     def test_original_entry_points_delegate_to_packages(self):
         import app
         import agente

@@ -507,6 +507,7 @@ td {
 
 CATEGORIES = [
     ("", "Todas"),
+    ("inventario", "Cadastro de máquinas"),
     ("dispositivo", "Dispositivos"),
     ("comando", "Comandos"),
     ("scanner", "Scanner"),

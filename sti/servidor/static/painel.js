@@ -2,6 +2,9 @@ const state = {
       devices: [],
       currentView: 'overview',
       search: '',
+      organizationFilters: { department: '', room: '', responsible: '' },
+      groupBy: '',
+      organizationEditor: { ip: null, dirty: false, saving: false, revision: '' },
       chart: null,
       currentDevice: null,
       soundEnabled: false,
@@ -122,6 +125,30 @@ function init() {
       document.getElementById('btnShutdown').addEventListener('click', () => sendCommand('shutdown'));
       document.getElementById('btnChat').addEventListener('click', () => sendCommand('msg'));
       document.getElementById('btnCopyModalIp').addEventListener('click', copyModalIp);
+      document.getElementById('organizationForm').addEventListener('submit', saveOrganization);
+      for (const field of ORGANIZATION_FIELDS) {
+        document.getElementById(ORGANIZATION_INPUTS[field]).addEventListener('input', () => {
+          state.organizationEditor.dirty = true;
+          document.getElementById('organizationSaveStatus').textContent = 'Alterações não salvas';
+        });
+        document.getElementById(ORGANIZATION_FILTERS[field]).addEventListener('change', event => {
+          state.organizationFilters[field] = event.target.value;
+          renderAll();
+        });
+      }
+      document.getElementById('organizationGroupBy').addEventListener('change', event => {
+        state.groupBy = ORGANIZATION_FIELDS.includes(event.target.value) ? event.target.value : '';
+        renderDevices();
+      });
+      document.getElementById('clearOrganizationFilters').addEventListener('click', () => {
+        state.search = '';
+        el.searchInput.value = '';
+        state.organizationFilters = { department: '', room: '', responsible: '' };
+        state.groupBy = '';
+        document.getElementById('organizationGroupBy').value = '';
+        updateOrganizationFilters();
+        renderAll();
+      });
     }
 
     async function enableAudioContext() {
@@ -170,8 +197,9 @@ function init() {
         const devices = Array.isArray(data.devices) ? data.devices : [];
         processStatusChanges(devices);
         state.devices = devices;
+        updateOrganizationFilters();
         if (state.currentDevice && el.deviceModalOverlay.classList.contains('active')) {
-          openModal(state.currentDevice.ip);
+          openModal(state.currentDevice.ip, true);
         }
         const summary = data.summary || buildSummary(devices);
         updateSummary(summary);
@@ -490,10 +518,13 @@ function renderLogs() {
       if (['116','117','118','119'].includes(state.currentView)) {
         devices = devices.filter(d => String(d.ip || '').startsWith(`10.2.${state.currentView}.`));
       }
+      devices = devices.filter(device => ORGANIZATION_FIELDS.every(field =>
+        matchesOrganizationFilter(device.organization?.[field], state.organizationFilters[field])
+      ));
       if (state.search) {
         devices = devices.filter(d => {
-          const searchable = `${d.name || ''} ${d.ip || ''} ${d.user || ''} ${d.os || ''}`.toLowerCase();
-          return searchable.includes(state.search);
+          const searchable = `${d.name || ''} ${d.ip || ''} ${d.user || ''} ${d.os || ''} ${ORGANIZATION_FIELDS.map(field => d.organization?.[field] || '').join(' ')}`;
+          return normalizeSearch(searchable).includes(normalizeSearch(state.search));
         });
       }
       devices.sort((a, b) => statusRank(a) - statusRank(b) || String(a.ip).localeCompare(String(b.ip), undefined, { numeric: true }));
@@ -517,11 +548,14 @@ function renderLogs() {
 
     function renderDevices() {
       const devices = getFilteredDevices();
+      document.getElementById('organizationResultCount').textContent = `${devices.length} de ${state.devices.length} máquinas • indicadores gerais consideram toda a rede`;
       if (!devices.length) {
         el.devicesGrid.innerHTML = `<div class="empty-state">Nenhum dispositivo encontrado para esse filtro.</div>`;
         return;
       }
-      el.devicesGrid.innerHTML = devices.map(createDeviceCard).join('');
+      el.devicesGrid.innerHTML = groupDevices(devices, state.groupBy).map(group =>
+        `${state.groupBy ? `<h3 class="device-group-heading">${escapeHtml(group.label)}<span>${group.devices.length} máquinas</span></h3>` : ''}${group.devices.map(createDeviceCard).join('')}`
+      ).join('');
       document.querySelectorAll('.device-card').forEach(card => {
         card.addEventListener('click', () => openModal(card.dataset.ip));
       });
@@ -562,6 +596,9 @@ function renderLogs() {
               <div class="info-value">${status.text}</div>
             </div>
           </div>
+          <dl class="organization-summary">
+            ${ORGANIZATION_FIELDS.map(field => `<div><dt>${ORGANIZATION_LABELS[field]}</dt><dd>${escapeHtml(device.organization?.[field] || 'Não informado')}</dd></div>`).join('')}
+          </dl>
           <div class="device-footer">
             <span style="color:var(--muted);font-weight:700;">Clique para abrir o pop-up</span>
             <span class="latency-pill ${latencyClass}">${latencyVal}</span>
@@ -641,10 +678,20 @@ function renderLogs() {
       el.mapGroups.innerHTML = groupHtml;
     }
 
-    function openModal(ip) {
+    function openModal(ip, refresh = false) {
       const device = state.devices.find(d => String(d.ip) === String(ip));
       if (!device) return;
       state.currentDevice = device;
+      const editor = state.organizationEditor;
+      if (!refresh || (!editor.dirty && !editor.saving)) {
+        editor.ip = ip;
+        editor.dirty = false;
+        editor.revision = device.organization?.updated_at || '';
+        for (const field of ORGANIZATION_FIELDS) {
+          document.getElementById(ORGANIZATION_INPUTS[field]).value = device.organization?.[field] || '';
+        }
+        document.getElementById('organizationSaveStatus').textContent = '';
+      }
       const os = getOSInfo(device.os);
       const status = getStatus(device);
       const hw = device.agent_online ? (device.hw || {}) : {};
@@ -723,6 +770,12 @@ function renderLogs() {
     }
 
     function closeModal() {
+      if (state.organizationEditor.saving) {
+        showToast('Aguarde o cadastro terminar de salvar.');
+        return;
+      }
+      if (state.organizationEditor.dirty && !confirm('Descartar as alterações não salvas do cadastro?')) return;
+      state.organizationEditor.dirty = false;
       el.deviceModalOverlay.classList.remove('active');
     }
 
@@ -850,14 +903,15 @@ function renderLogs() {
         showToast('Nenhum dado para exportar.');
         return;
       }
-      const header = ['IP','Dispositivo','Sistema','Status','Usuário','Latência(ms)'];
+      const header = ['IP','Dispositivo','Sistema','Status','Usuário','Latência(ms)','Setor','Sala','Responsável'];
       const rows = devices.map(d => [
         d.ip || '',
         d.name || '',
         d.os || '',
         d.online ? 'Online' : 'Offline',
         d.user || '',
-        Number(d.latency || 0)
+        Number(d.latency || 0),
+        ...ORGANIZATION_FIELDS.map(field => d.organization?.[field] || '')
       ]);
       const csv = [header, ...rows].map(row => row.map(value => `"${safeCsv(value).replace(/"/g, '""')}"`).join(',')).join('\n');
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -1267,6 +1321,81 @@ function initNotifications() {
       return String(value ?? '').replace(/[&<>"']/g, character => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
       }[character]));
+    }
+
+    const ORGANIZATION_FIELDS = ['department', 'room', 'responsible'];
+    const ORGANIZATION_LABELS = { department: 'Setor', room: 'Sala', responsible: 'Responsável' };
+    const ORGANIZATION_INPUTS = { department: 'organizationDepartment', room: 'organizationRoom', responsible: 'organizationResponsible' };
+    const ORGANIZATION_FILTERS = { department: 'filterDepartment', room: 'filterRoom', responsible: 'filterResponsible' };
+
+    function normalizeSearch(value) {
+      return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR');
+    }
+
+    function matchesOrganizationFilter(value, selection) {
+      if (!selection) return true;
+      if (selection === 'unassigned') return !value;
+      return normalizeSearch(value) === normalizeSearch(selection.slice(6));
+    }
+
+    function updateOrganizationFilters() {
+      for (const field of ORGANIZATION_FIELDS) {
+        const selected = state.organizationFilters[field];
+        const values = new Set(state.devices.map(device => device.organization?.[field] || '').filter(Boolean));
+        if (selected.startsWith('value:')) values.add(selected.slice(6));
+        const options = [...values].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+        const select = document.getElementById(ORGANIZATION_FILTERS[field]);
+        select.innerHTML = `<option value="">Todos — ${ORGANIZATION_LABELS[field]}</option><option value="unassigned">Não informado</option>` +
+          options.map(value => `<option value="value:${escapeHtml(value)}">${escapeHtml(value)}</option>`).join('');
+        select.value = selected;
+      }
+    }
+
+    function groupDevices(devices, field) {
+      if (!ORGANIZATION_FIELDS.includes(field)) return [{ label: '', devices }];
+      const groups = new Map();
+      for (const device of devices) {
+        const value = device.organization?.[field] || '';
+        const key = normalizeSearch(value);
+        if (!groups.has(key)) groups.set(key, { label: value || `${ORGANIZATION_LABELS[field]} não informado`, devices: [] });
+        groups.get(key).devices.push(device);
+      }
+      return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
+    }
+
+    async function saveOrganization(event) {
+      event.preventDefault();
+      const editor = state.organizationEditor;
+      if (!editor.ip || editor.saving) return;
+      const ip = editor.ip;
+      const payload = { expected_updated_at: editor.revision };
+      for (const field of ORGANIZATION_FIELDS) payload[field] = document.getElementById(ORGANIZATION_INPUTS[field]).value;
+      const status = document.getElementById('organizationSaveStatus');
+      editor.saving = true;
+      document.getElementById('organizationFieldset').disabled = true;
+      status.textContent = 'Salvando…';
+      try {
+        const response = await checkedFetch(`/api/devices/${encodeURIComponent(ip)}/organization`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        const device = state.devices.find(item => item.ip === ip);
+        if (device) device.organization = data.organization;
+        editor.revision = data.organization.updated_at;
+        editor.dirty = false;
+        for (const field of ORGANIZATION_FIELDS) document.getElementById(ORGANIZATION_INPUTS[field]).value = data.organization[field];
+        updateOrganizationFilters();
+        renderAll();
+        status.textContent = 'Cadastro salvo';
+        showToast('Setor, sala e responsável salvos.');
+        loadEvents();
+      } catch (error) {
+        status.textContent = error.message;
+        showToast(error.message);
+      } finally {
+        editor.saving = false;
+        document.getElementById('organizationFieldset').disabled = false;
+      }
     }
 
     init();

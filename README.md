@@ -11,6 +11,7 @@ A rede padrão foi preservada: **10.2.116.0/22**, com os segmentos **116, 117, 1
 - Comandos condicionados às capacidades e à disponibilidade do agente.
 - Reentrega de comandos sem confirmação, expiração e registro local de resultados para evitar execução duplicada após falhas.
 - Histórico persistente e pesquisa corrigidos; acompanhamento do resultado dos comandos no painel.
+- Cadastro por setor, sala e responsável, com filtros combinados, agrupamento e exportação no inventário.
 - Escape seguro de atributos HTML, proteção dos CSVs contra fórmulas, limitação de tentativas de login e cabeçalhos de segurança.
 - Configuração externa, sem senha ou token embutido nos fontes ou no executável.
 - JavaScript/CSS separados e Chart.js 4.5.1 distribuído localmente para funcionar sem CDN. Fontes externas são opcionais; há fontes de fallback.
@@ -28,6 +29,7 @@ AgenteSTI/
 │   ├── servidor/
 │   │   ├── app.py              # API, scanner, autenticação e fila
 │   │   ├── relatorios.py       # Relatórios e exportação
+│   │   ├── organizacao.py     # Cadastro administrativo das máquinas
 │   │   ├── templates/          # Páginas HTML
 │   │   └── static/             # CSS, JavaScript, imagens e bibliotecas
 │   ├── agente/
@@ -183,7 +185,23 @@ No Windows:
 .\.venv\Scripts\python.exe -m PyInstaller --noconfirm packaging/STI_Agente_V3_2.spec
 ```
 
-Saída: `dist\STI_Agente_V3_2.exe`. O console fica habilitado para diagnóstico. Os `.spec` antigos ficam em `packaging/legacy/` como alternativas de nome; use V3.2 para a distribuição atual. O JSON com credenciais não é embutido no build.
+Saída: `dist\STI_Agente_V3_2.exe`. A configuração atual gera o executável sem console (`console=False`); a execução pelo PyCharm mantém seu terminal. Para diagnóstico com saída visível, use o fonte ou gere um build com console. Os `.spec` antigos ficam em `packaging/legacy/` como alternativas de nome; use V3.2 para a distribuição atual. O JSON com credenciais não é embutido no build.
+
+## Organização por setor, sala e responsável
+
+1. Abra o cartão da máquina no painel.
+2. Preencha **Setor**, **Sala** e **Responsável** na seção **Localização e responsável**.
+3. Clique em **Salvar cadastro**. Campos vazios removem o valor anterior.
+4. Use a busca ou os filtros acima dos cartões para localizar máquinas pelo cadastro. Os filtros combinam entre si e com as faixas de IP existentes.
+5. Escolha **Agrupar por** para reunir os cartões por setor, sala ou responsável. A opção **Não informado** nos filtros localiza equipamentos ainda sem cadastro.
+
+O responsável é um dado administrativo e pode ser diferente do usuário conectado ao Windows. O cadastro pode ser editado mesmo com a máquina offline e é incluído no CSV de inventário, respeitando os filtros selecionados. Os indicadores gerais continuam mostrando toda a rede.
+
+Os dados ficam na tabela `device_organization` do mesmo banco SQLite. A tabela é criada automaticamente na inicialização, preservando o inventário existente. Os heartbeats do agente e as varreduras não modificam esse cadastro; não é necessário atualizar os agentes para usar o recurso.
+
+Alterações são registradas na auditoria, na categoria **Cadastro de máquinas** (`inventario`). A atualização automática da tela preserva os campos em edição. Se outra sessão salvar primeiro, o painel avisa sobre o conflito em vez de sobrescrever silenciosamente.
+
+O cadastro acompanha o IP registrado no inventário atual. Mudanças de IP por DHCP exigem conferir o cadastro; identificação permanente por equipamento ainda não está implementada.
 
 ## APIs e relatórios
 
@@ -192,6 +210,7 @@ Saída: `dist\STI_Agente_V3_2.exe`. O console fica habilitado para diagnóstico.
 | GET/POST | `/login` | Formulário e login. Cinco tentativas por IP a cada cinco minutos. |
 | POST | `/logout` | Encerra a sessão administrativa. |
 | GET | `/api/devices` | Inventário, disponibilidade da máquina/agente, capacidades e progresso do scanner. |
+| PATCH | `/api/devices/<ip>/organization` | Sessão administrativa; edita setor (`department`), sala (`room`) e responsável (`responsible`). |
 | POST | `/api/scan` | Solicita varredura manual. |
 | GET | `/api/history` | Últimos 300 snapshots. |
 | GET | `/api/events` | Auditoria; filtros `ip`, `category`, `limit` (1–500). |
@@ -202,7 +221,9 @@ Saída: `dist\STI_Agente_V3_2.exe`. O console fica habilitado para diagnóstico.
 | GET | `/relatorios` | Relatórios com filtros `start`, `end`, `ip`, `category`. |
 | GET | `/api/report/events.csv` | Exportação dos eventos com os mesmos filtros. |
 
-Todas as rotas administrativas exigem sessão. A página de relatórios mostra até 500 eventos e o CSV até 10.000; datas no formato `AAAA-MM-DD`. Categorias: `dispositivo`, `comando`, `scanner`, `seguranca`.
+Todas as rotas administrativas exigem sessão. A página de relatórios mostra até 500 eventos e o CSV até 10.000; datas no formato `AAAA-MM-DD`. Categorias: `dispositivo`, `inventario`, `comando`, `scanner`, `seguranca`.
+
+O cadastro aceita alterações parciais em JSON, com textos de até 120 caracteres. Um campo enviado como `""` é limpo; campos omitidos são preservados. `GET /api/devices` inclui o objeto `organization`, com esses três campos e `updated_at`. Ao enviar `expected_updated_at` no PATCH, uma versão diferente da atual retorna HTTP `409` para evitar sobrescrita concorrente.
 
 ## Testes e verificações
 
@@ -211,7 +232,13 @@ Todas as rotas administrativas exigem sessão. A página de relatórios mostra a
 node --test tests/test_painel.cjs
 ```
 
-Os testes usam bancos temporários e não executam ações de energia. Foram validados: autenticação, isolamento por IP, faixas originais, métricas, migração do banco, concorrência da fila, transições, expiração, perda de confirmações, recuperação após reinício, CSV, histórico e escape de HTML. Também houve coleta real de hardware no Windows e teste do painel no Edge headless, com dados fictícios e scanner desativado.
+Os testes usam bancos temporários e não executam ações de energia. Foram validados: autenticação, isolamento por IP, faixas originais, métricas, migração do banco, concorrência da fila, transições, expiração, perda de confirmações, recuperação após reinício, CSV, histórico e escape de HTML. O cadastro tem testes de persistência após heartbeat, scanner e reinício, edição parcial, conflitos, filtros, grupos e preservação de campos durante edição. Também houve coleta real de hardware no Windows e teste do painel no Edge headless, com dados fictícios e scanner desativado.
+
+## Publicação
+
+Faça o merge das alterações na `main` antes de executar `deploy.ps1`. O script publica primeiro no remoto `production`, depois no `origin`, e consulta o serviço por SSH no host `agente-sti`; esses destinos precisam estar configurados no ambiente de implantação. Ele recusa outras branches e interrompe a execução se a preparação ou o commit falhar.
+
+Para publicar somente o código no GitHub, utilize `git push origin main`, sem executar o script de deploy da intranet.
 
 Não houve implantação nem teste nas máquinas reais dos usuários. Antes de distribuir a todos, valide um computador da rede, especialmente firewall, impressoras da sessão e permissões das ações habilitadas.
 

@@ -9,7 +9,7 @@ function loadPanel() {
   const context = vm.createContext({
     console, setTimeout, clearTimeout,
     document: { getElementById: id => {
-      if (!nodes.has(id)) nodes.set(id, {innerHTML: '', textContent: '', style: {}, classList: { contains: () => false }});
+      if (!nodes.has(id)) nodes.set(id, {innerHTML: '', textContent: '', value: '', style: {}, classList: { contains: () => false, add() {}, remove() {} }});
       return nodes.get(id);
     } },
     sessionStorage: {getItem: () => null, setItem: () => {}},
@@ -59,4 +59,81 @@ test('faixas de IP originais permanecem no painel', () => {
   run(`state.devices = [{ip:'10.2.116.1', online:true},{ip:'10.2.117.1',online:true}]; state.currentView='116';`);
   assert.equal(run('getFilteredDevices().length'), 1);
   assert.equal(run('getFilteredDevices()[0].ip'), '10.2.116.1');
+});
+
+test('busca encontra setor, sala e responsável sem depender de acentos', () => {
+  const {run} = loadPanel();
+  run(`state.devices = [{ip:'10.2.116.33',organization:{department:'Administração',room:'Sala 204',responsible:'João Silva'}}];`);
+  for (const search of ['administracao','204','joao silva']) {
+    run(`state.search=${JSON.stringify(search)};`);
+    assert.equal(run('getFilteredDevices().length'), 1);
+  }
+});
+
+test('filtros combinam localização, responsável e faixa de IP', () => {
+  const {run} = loadPanel();
+  run(`state.devices = [
+    {ip:'10.2.116.1', organization:{department:'TI',room:'204',responsible:'Ana'}},
+    {ip:'10.2.117.1', organization:{department:'TI',room:'204',responsible:'Ana'}},
+    {ip:'10.2.116.2', organization:{department:'TI',room:'205',responsible:'Ana'}}];
+    state.currentView='116'; state.organizationFilters={department:'value:TI',room:'value:204',responsible:'value:Ana'};`);
+  assert.equal(run('getFilteredDevices().length'), 1);
+  assert.equal(run('getFilteredDevices()[0].ip'), '10.2.116.1');
+  assert.equal(run(`matchesOrganizationFilter('', 'unassigned')`), true);
+  assert.equal(run(`matchesOrganizationFilter('unassigned', 'value:unassigned')`), true);
+});
+
+test('agrupamento inclui máquinas sem cadastro e metadados são escapados', () => {
+  const {run} = loadPanel();
+  run(`state.devices=[{ip:'10.2.116.1', organization:{department:'TI'}},{ip:'10.2.116.2',organization:{department:'ti'}},{ip:'10.2.116.3'}];`);
+  assert.equal(run(`groupDevices(state.devices,'department').length`), 2);
+  assert.equal(run(`groupDevices(state.devices,'department').find(group=>group.label==='TI').devices.length`), 2);
+  const html = run(`createDeviceCard({ip:'10.2.116.1',organization:{department:'<script>teste</script>',responsible:'"<img>'}})`);
+  assert.ok(html.includes('&lt;script&gt;'));
+  assert.ok(!html.includes('<script>'));
+  assert.ok(!html.includes('<img>'));
+});
+
+test('atualização periódica preserva os campos que o administrador está editando', () => {
+  const {run, nodes} = loadPanel();
+  run(`state.devices=[{ip:'10.2.116.1',organization:{department:'TI',updated_at:'old'}}];
+       openModal('10.2.116.1'); state.organizationEditor.dirty=true;
+       document.getElementById('organizationDepartment').value='Financeiro';
+       state.devices[0].organization={department:'Outro',updated_at:'new'};
+       openModal('10.2.116.1',true);`);
+  assert.equal(nodes.get('organizationDepartment').value, 'Financeiro');
+  assert.equal(run('state.organizationEditor.revision'), 'old');
+});
+
+test('CSV de inventário inclui setor, sala e responsável', () => {
+  const {run} = loadPanel();
+  run(`globalThis.Blob=class { constructor(parts){globalThis.exportedCSV=parts.join('');} };
+       globalThis.URL={createObjectURL:()=>'',revokeObjectURL:()=>{}};
+       document.createElement=()=>({click(){}}); showToast=()=>{}; addEventLog=()=>{};
+       state.devices=[{ip:'10.2.116.1',organization:{department:'TI',room:'204',responsible:'Ana'}}]; exportCSV();`);
+  const csv = run('exportedCSV');
+  assert.ok(csv.includes('"Setor","Sala","Responsável"'));
+  assert.ok(csv.includes('"TI","204","Ana"'));
+});
+
+test('falha ao salvar mantém campos e permite tentar novamente', async () => {
+  const {run, nodes} = loadPanel();
+  run(`state.devices=[{ip:'10.2.116.1',organization:{department:'TI',updated_at:'rev'}}];
+       openModal('10.2.116.1'); state.organizationEditor.dirty=true;
+       document.getElementById('organizationDepartment').value='Financeiro';
+       checkedFetch=async()=>{throw new Error('Falha de conexão')}; showToast=()=>{};`);
+  await run('saveOrganization({preventDefault(){}})');
+  assert.equal(nodes.get('organizationDepartment').value, 'Financeiro');
+  assert.equal(nodes.get('organizationSaveStatus').textContent, 'Falha de conexão');
+  assert.equal(run('state.organizationEditor.dirty'), true);
+  assert.equal(run('state.organizationEditor.saving'), false);
+  assert.equal(nodes.get('organizationFieldset').disabled, false);
+});
+
+test('opções de filtro escapam aspas e preservam a seleção atual', () => {
+  const {run, nodes} = loadPanel();
+  run(`state.devices=[{organization:{department:'TI" autofocus onfocus="teste'}}];
+       state.organizationFilters.room='value:204'; updateOrganizationFilters();`);
+  assert.ok(nodes.get('filterDepartment').innerHTML.includes('value:TI&quot; autofocus onfocus=&quot;teste'));
+  assert.equal(nodes.get('filterRoom').value, 'value:204');
 });

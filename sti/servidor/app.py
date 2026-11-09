@@ -17,6 +17,7 @@ import math
 from collections import defaultdict, deque
 from contextlib import contextmanager
 from sti.comum.configuracao import BASE_DIR, setting
+from sti.servidor import organizacao
 
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -331,6 +332,7 @@ def init_db():
                 conn.execute(f"ALTER TABLE device_state ADD COLUMN {column} TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_events(timestamp)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_ip ON audit_events(ip)")
+        organizacao.init_schema(conn)
 
     logger.info(
         "Banco de dados inicializado."
@@ -1025,6 +1027,7 @@ def scanner_loop():
 def api_devices():
 
     now = datetime.now()
+    organizations = organizacao.load_organizations(db_connect)
 
     with lock:
 
@@ -1042,6 +1045,7 @@ def api_devices():
                 "user": device["user"],
                 "os": device["os"],
                 "hw": device.get("hw", {}),
+                "organization": organizations.get(device["ip"], organizacao.empty_organization()),
                 "agent_online": get_agent_online(device),
                 "agent_version": device.get("agent_version", ""),
                 "capabilities": device.get("capabilities", []),
@@ -1877,6 +1881,8 @@ registrar_relatorios(
     require_admin,
     db_connect
 )
+
+organizacao.register_routes(app, require_admin, db_connect, devices, lock, valid_ip)
 
 
 # ==========================================
