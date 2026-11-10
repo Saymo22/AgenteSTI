@@ -12,6 +12,12 @@ const state = {
       currentDevice: null,
       soundEnabled: false,
       audioCtx: null,
+      soundBuffer: null,
+      soundName: '',
+      soundVolume: 70,
+      soundSources: [],
+      soundGain: null,
+      soundLoading: false,
       previousStatus: {},
       eventLogs: [],
       serverEvents: [],
@@ -56,6 +62,8 @@ function init() {
 
    bindEvents();
    initNotifications();
+   initAlertSoundControls();
+   initSoundSettings();
 
     updateClock();
 
@@ -142,7 +150,6 @@ function init() {
         setTimeout(() => ripple.remove(), 600);
       });
       document.getElementById('btnScan').addEventListener('click', scanNetwork);
-      document.getElementById('btnSound').addEventListener('click', toggleSound);
       document.getElementById('btnTv').addEventListener('click', toggleKiosk);
       document.getElementById('modalClose').addEventListener('click', closeModal);
       el.deviceModalOverlay.addEventListener('click', (e) => { if (e.target === el.deviceModalOverlay) closeModal(); });
@@ -1083,48 +1090,6 @@ function renderLogs() {
       addEventLog('success', 'Exportação CSV', `Exportação realizada com ${devices.length} registros.`, new Date());
     }
 
-    async function toggleSound() {
-      const btn = document.getElementById('btnSound');
-      if (state.soundEnabled) {
-        state.soundEnabled = false;
-        btn.classList.remove('active');
-        btn.setAttribute('aria-pressed', 'false');
-        showToast('Alerta sonoro desativado.');
-        addEventLog('info', 'Alerta sonoro', 'O alerta sonoro foi desativado.', new Date());
-        return;
-      }
-      try {
-        await enableAudioContext();
-        state.soundEnabled = true;
-        btn.classList.add('active');
-        btn.setAttribute('aria-pressed', 'true');
-        playAlert(); // Teste audível na ativação
-        showToast('Som ativado: teste de alerta reproduzido.');
-        addEventLog('success', 'Alerta sonoro', 'Som ativado e teste disparado.', new Date());
-      } catch (err) {
-        showToast('O navegador bloqueou o áudio: ' + err.message);
-        addEventLog('warning', 'Alerta sonoro', 'Não foi possível ativar o áudio.', new Date());
-      }
-    }
-
-    function playAlert() {
-      if (!state.soundEnabled || !state.audioCtx || state.audioCtx.state !== 'running') return;
-      const now = state.audioCtx.currentTime;
-      [0, 0.42].forEach(delay => {
-        const osc = state.audioCtx.createOscillator();
-        const gain = state.audioCtx.createGain();
-        osc.connect(gain); gain.connect(state.audioCtx.destination);
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(740, now + delay);
-        osc.frequency.setValueAtTime(880, now + delay + .13);
-        gain.gain.setValueAtTime(.0001, now + delay);
-        gain.gain.linearRampToValueAtTime(.18, now + delay + .025);
-        gain.gain.exponentialRampToValueAtTime(.0001, now + delay + .35);
-        osc.start(now + delay);
-        osc.stop(now + delay + .36);
-      });
-    }
-
     function toggleKiosk() {
       document.body.classList.toggle('kiosk');
       if (document.body.classList.contains('kiosk')) {
@@ -1151,28 +1116,6 @@ function processStatusChanges(devices) {
     }
 
     let houveQueda = false;
-
-    // Contagem atual de equipamentos offline
-    const offline = devices.filter(
-        device => device.online === false
-    );
-
-    const badge = document.getElementById(
-        'notificationBadge'
-    );
-
-    const summary = document.getElementById(
-        'notificationSummary'
-    );
-
-    badge.textContent = offline.length > 99
-        ? '99+'
-        : offline.length;
-
-    badge.hidden = offline.length === 0;
-
-    summary.textContent =
-        `${offline.length} dispositivos offline`;
 
     // Detectar mudanças de estado
     devices.forEach(device => {
@@ -1227,6 +1170,7 @@ function processStatusChanges(devices) {
             title: titulo,
             text: descricao,
             recovered: current,
+            read: !document.getElementById('notificationPanel').hidden,
             date: new Date()
 
         });
@@ -1262,6 +1206,8 @@ function processStatusChanges(devices) {
    ========================================== */
 
 function renderNotifications() {
+
+    syncNotificationSummary();
 
     const container = document.getElementById(
         'notificationList'
@@ -1323,6 +1269,38 @@ function renderNotifications() {
 }
 
 
+function syncNotificationSummary() {
+    const notifications = state.notifications || [];
+    const unread = notifications.filter(notification => notification.read !== true).length;
+    const badge = document.getElementById('notificationBadge');
+    badge.textContent = unread > 99 ? '99+' : String(unread);
+    badge.hidden = unread === 0;
+    document.getElementById('btnNotifications').setAttribute('aria-label',
+        unread ? `Abrir notificações (${unread} não ${unread === 1 ? 'lida' : 'lidas'})` : 'Abrir notificações');
+    document.getElementById('notificationSummary').textContent = notifications.length
+        ? `${notifications.length} ${notifications.length === 1 ? 'notificação' : 'notificações'} • ${unread} não ${unread === 1 ? 'lida' : 'lidas'}`
+        : 'Nenhuma notificação';
+}
+
+
+function toggleNotifications() {
+    const panel = document.getElementById('notificationPanel');
+    panel.hidden = !panel.hidden;
+    document.getElementById('btnNotifications').setAttribute('aria-expanded', String(!panel.hidden));
+    if (!panel.hidden) {
+        (state.notifications || []).forEach(notification => { notification.read = true; });
+    }
+    renderNotifications();
+}
+
+
+function clearNotifications() {
+    state.notifications = [];
+    renderNotifications();
+    showToast('Notificações recentes limpas.');
+}
+
+
 /* ==========================================
    ABRIR / FECHAR CENTRAL
    ========================================== */
@@ -1347,24 +1325,11 @@ function initNotifications() {
 
         event.stopPropagation();
 
-        panel.hidden = !panel.hidden;
-
-        button.setAttribute(
-            'aria-expanded',
-            String(!panel.hidden)
-        );
+        toggleNotifications();
 
     });
 
-    clear.addEventListener('click', () => {
-
-        state.notifications = [];
-
-        renderNotifications();
-
-        showToast('Notificações recentes limpas.');
-
-    });
+    clear.addEventListener('click', clearNotifications);
 
     document.addEventListener('click', event => {
 

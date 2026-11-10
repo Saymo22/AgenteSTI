@@ -474,6 +474,25 @@ body.modal-open { overflow: hidden !important; }
 .identity-recovery p,.identity-recovery label { color: #b5c8dc; font-size: .78rem; line-height: 1.7; margin: 10px 0; display: block; }
 .identity-recovery select { width: 100%; min-width: 0; padding: 12px; border-radius: 10px; border: 1px solid #8ab5de44; background: #0b1b2c; color: #e8f2ff; margin-bottom: 12px; }
 .device-history-section { margin: 0 0 22px; }
+.sound-settings-panel { position: fixed; z-index: 350; width: min(360px,calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; padding: 21px; border: 1px solid #88b9e33d; border-radius: 22px; background: linear-gradient(145deg,#162d43,#0b1a2d); box-shadow: 0 24px 65px #0009; color: #e1edfa; }
+.sound-settings-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 18px; }
+.sound-settings-head h3 { display: flex; gap: 8px; align-items: center; margin-top: 5px; font-size: 1rem; }
+.sound-settings-eyebrow { font-size: .57rem; color: #7fd6be; letter-spacing: .15em; font-weight: 700; }
+.sound-settings-panel .sti-icon { width: 18px; height: 18px; flex-shrink: 0; }
+.sound-current-file { display: flex; align-items: center; gap: 12px; padding: 14px; background: #020f1d44; border: 1px solid #8ab5de20; border-radius: 13px; margin-bottom: 12px; }
+.sound-current-file>svg { color: #87d9c5; }
+.sound-current-file>div { min-width: 0; }
+.sound-current-file span { display: block; color: #a3b9d0; font-size: .68rem; margin-bottom: 4px; }
+.sound-current-file strong { font-size: .83rem; overflow-wrap: anywhere; }
+.sound-file-picker { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; font-size: .78rem; cursor: pointer; }
+.sound-format-hint,.sound-settings-status { color: #a3b9d0; font-size: .69rem; line-height: 1.7; margin-top: 9px; }
+.sound-volume-label { display: flex; justify-content: space-between; margin-top: 19px; font-size: .78rem; }
+.sound-volume-label output { color: #8ee4ce; font-variant-numeric: tabular-nums; }
+.sound-volume-slider { width: 100%; accent-color: #65d5b4; margin: 12px 0 18px; cursor: pointer; }
+.sound-settings-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.sound-settings-panel .tool-btn { min-width: 0; padding: 11px 9px; font-size: .73rem; justify-content: center; }
+.sound-enable-btn { width: 100%; margin-top: 10px; }
+.sound-settings-panel button:disabled { cursor: wait; opacity: .5; }
 #deviceIdentityHistory { max-height: 320px; overflow: auto; font-size: .76rem; line-height: 1.7; }
 #deviceIdentityHistory article { border-left: 2px solid #69bca4; margin: 12px 0; padding: 8px 14px; background: #a4c6f905; overflow-wrap: anywhere; }
 #deviceIdentityHistory time { display: block; color: #91a9c2; font-size: .68rem; }
