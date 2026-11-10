@@ -48,6 +48,53 @@ test('pop-up mostra dados históricos e orienta quando não há agente', () => {
   assert.equal(nodes.get('modalUserLabel').textContent,'Usuário conectado');
 });
 
+test('UUID distingue equipamentos no mesmo último IP e acompanha mudança de endereço', () => {
+  const {run,nodes}=loadPanel();
+  run(`state.devices=[{device_id:'id-antigo',ip:'10.2.116.33',name:'ANTIGO',address_active:false,organization:{department:'RH'}},
+       {device_id:'id-atual',ip:'10.2.116.33',name:'ATUAL',organization:{department:'TI'}}];
+       openModal('id-antigo');`);
+  assert.equal(nodes.get('modalName').textContent,'ANTIGO');
+  assert.ok(nodes.get('modalIpField').textContent.includes('último IP'));
+  assert.equal(run('state.organizationEditor.ip'),'id-antigo');
+  run(`openModal('id-atual');state.organizationEditor.dirty=true;document.getElementById('organizationDepartment').value='Financeiro';state.devices[1].ip='10.2.118.45';openModal('id-atual',true);`);
+  assert.equal(nodes.get('modalIpField').textContent,'10.2.118.45');
+  assert.equal(nodes.get('organizationDepartment').value,'Financeiro');
+  assert.equal(run('state.organizationEditor.ip'),'id-atual');
+});
+
+test('busca encontra MAC, série e UUID sem misturar cadastros por IP', () => {
+  const {run}=loadPanel();
+  run(`state.devices=[{device_id:'uuid-estavel',ip:'10.2.116.33',serial_number:'ABC-123',mac_addresses:['02:11:22:33:44:55']},{device_id:'outro',ip:'10.2.116.33'}];`);
+  for(const query of ['uuid-estavel','abc-123','02:11:22:33:44:55']){
+    run(`state.search=${JSON.stringify(query)};`);
+    assert.equal(run('getFilteredDevices().length'),1);
+    assert.equal(run('getFilteredDevices()[0].device_id'),'uuid-estavel');
+  }
+});
+
+test('salvar cadastro usa UUID e mantém outro equipamento do mesmo IP intacto', async () => {
+  const {run}=loadPanel();
+  run(`state.devices=[{device_id:'um',ip:'10.2.116.33',organization:{department:'RH'}},{device_id:'dois',ip:'10.2.116.33',organization:{department:'TI'}}];
+       openModal('um');showToast=()=>{};renderAll=()=>{};loadEvents=()=>{};
+       checkedFetch=async(url,options)=>{globalThis.savedURL=url;return {json:async()=>({organization:{department:'Novo',updated_at:'revision'}})}};`);
+  await run('saveOrganization({preventDefault(){}})');
+  assert.equal(run('savedURL'),'/api/devices/um/organization');
+  assert.equal(run('state.devices[0].organization.department'),'Novo');
+  assert.equal(run('state.devices[1].organization.department'),'TI');
+});
+
+test('comando inclui a identidade esperada e histórico escapa conteúdo recebido', async () => {
+  const {run,nodes}=loadPanel();
+  run(`state.currentDevice={device_id:'uuid-do-alvo',ip:'10.2.116.33'};showToast=()=>{};addEventLog=()=>{};closeModal=()=>{};
+       checkedFetch=async(url,options)=>{globalThis.commandPayload=JSON.parse(options.body);return {json:async()=>({command_id:'job'})}};`);
+  await run(`postCommand('msg','teste')`);
+  assert.equal(run('commandPayload.device_id'),'uuid-do-alvo');
+  run(`checkedFetch=async()=>({json:async()=>({events:[{timestamp:'2026-11-10T10:00:00',ip:'10.2.116.33',status:'ip_alterado',description:'<img src=x onerror=alert(1)>'}]})});`);
+  await run('loadDeviceHistory()');
+  assert.ok(nodes.get('deviceIdentityHistory').innerHTML.includes('&lt;img'));
+  assert.ok(!nodes.get('deviceIdentityHistory').innerHTML.includes('<img'));
+});
+
 test('nomes com aspas não criam atributos de evento', () => {
   const {run} = loadPanel();
   const html = run(`createDeviceCard({ip:'10.2.116.33', name:'PC" onmouseover="alert(1)', os:'Windows', online:true})`);

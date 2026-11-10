@@ -17,7 +17,7 @@ import math
 from collections import defaultdict, deque
 from contextlib import contextmanager
 from sti.comum.configuracao import BASE_DIR, setting
-from sti.servidor import organizacao
+from sti.servidor import organizacao, inventario
 from sti.servidor.identificacao import HostnameResolver
 
 from pathlib import Path
@@ -365,6 +365,7 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_events(timestamp)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_ip ON audit_events(ip)")
         organizacao.init_schema(conn)
+        inventario.init_schema(conn)
 
     logger.info(
         "Banco de dados inicializado."
@@ -375,15 +376,23 @@ def init_db():
 # AUDITORIA
 # ==========================================
 
+_INFER_DEVICE = object()
+
+
 def audit(
     category,
     status,
     description,
     ip=None,
-    name=None
+    name=None,
+    device_id=_INFER_DEVICE
 ):
 
     try:
+
+        with lock:
+            if device_id is _INFER_DEVICE:
+                device_id = devices.get(ip, {}).get("device_id")
 
         with db_connect() as conn:
 
@@ -394,16 +403,16 @@ def audit(
                     ip,
                     name,
                     status,
-                    description
+                    description, device_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
                 agora(),
                 category,
                 ip,
                 name,
                 status,
-                description
+                description, device_id
             ))
 
     except Exception:
@@ -416,49 +425,38 @@ def audit(
 # DISPOSITIVOS - BANCO
 # ==========================================
 
+def write_device(conn, ip, device):
+    device_id = device.get("device_id")
+    binding = conn.execute("SELECT device_id FROM machine_inventory WHERE current_ip=?", (ip,)).fetchone()
+    if device_id:
+        if not binding or binding[0] != device_id:
+            return False  # Snapshot de scanner anterior a uma mudança de IP.
+    elif binding:
+        return False
+    result = conn.execute("""INSERT INTO device_state
+        (ip,name,user,os,hw,last_seen,last_agent_seen,agent_version,capabilities,name_source,device_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(ip) DO UPDATE SET
+        name=excluded.name,user=excluded.user,os=excluded.os,hw=excluded.hw,last_seen=excluded.last_seen,
+        last_agent_seen=excluded.last_agent_seen,agent_version=excluded.agent_version,
+        capabilities=excluded.capabilities,name_source=excluded.name_source,device_id=excluded.device_id
+        WHERE excluded.last_seen >= device_state.last_seen""",
+        (ip,device.get('name',''),device.get('user',''),device.get('os','Desconhecido'),json.dumps(device.get('hw',{})),
+         device['last_seen'].isoformat(),device['last_agent_seen'].isoformat() if device.get('last_agent_seen') else None,
+         device.get('agent_version',''),json.dumps(device.get('capabilities',[])),identification_source(device),device_id))
+    if not result.rowcount:
+        return False
+    if device_id:
+        conn.execute("UPDATE machine_inventory SET snapshot=? WHERE device_id=? AND current_ip=?",
+            (json.dumps(device, default=lambda value: value.isoformat()),device_id,ip))
+    return True
+
+
 def save_device(ip, device):
-
     try:
-
-        with db_connect() as conn:
-
-            conn.execute("""
-                INSERT INTO device_state (
-                    ip,
-                    name,
-                    user,
-                    os,
-                    hw,
-                    last_seen, last_agent_seen, agent_version, capabilities, name_source
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(ip) DO UPDATE SET
-                    name=excluded.name, user=excluded.user, os=excluded.os,
-                    hw=excluded.hw, last_seen=excluded.last_seen,
-                    last_agent_seen=excluded.last_agent_seen,
-                    agent_version=excluded.agent_version, capabilities=excluded.capabilities,
-                    name_source=excluded.name_source
-                WHERE excluded.last_seen >= device_state.last_seen
-            """, (
-                ip,
-                device.get("name", ""),
-                device.get("user", ""),
-                device.get("os", "Desconhecido"),
-                json.dumps(
-                    device.get("hw", {})
-                ),
-                device["last_seen"].isoformat(),
-                device.get("last_agent_seen").isoformat() if device.get("last_agent_seen") else None,
-                device.get("agent_version", ""),
-                json.dumps(device.get("capabilities", [])),
-                identification_source(device)
-            ))
-
+        with lock, db_connect() as conn:
+            write_device(conn, ip, device)
     except Exception:
-        logger.exception(
-            "Erro ao salvar dispositivo %s",
-            ip
-        )
+        logger.exception("Erro ao salvar dispositivo %s", ip)
 
 
 def load_devices():
@@ -472,7 +470,7 @@ def load_devices():
                 user,
                 os,
                 hw,
-                last_seen, last_agent_seen, agent_version, capabilities, name_source
+                last_seen, last_agent_seen, agent_version, capabilities, name_source, device_id
             FROM device_state
         """).fetchall()
 
@@ -480,7 +478,7 @@ def load_devices():
 
         for row in rows:
 
-            ip, name, user, os_name, hw_json, last_seen, agent_last, agent_version, capabilities, name_source = row
+            ip, name, user, os_name, hw_json, last_seen, agent_last, agent_version, capabilities, name_source, device_id = row
 
             try:
 
@@ -499,6 +497,7 @@ def load_devices():
                 "ip": ip,
                 "name": name or ip,
                 "name_source": name_source,
+                "device_id": device_id,
                 "user": user or "",
                 "os": os_name or "Desconhecido",
                 "hw": hw,
@@ -526,7 +525,7 @@ def load_devices():
 # HISTÓRICO DE STATUS
 # ==========================================
 
-def register_change(ip, name, status):
+def register_change(ip, name, status, device_id=None):
 
     logger.info(
         "Dispositivo %s: %s",
@@ -556,7 +555,8 @@ def register_change(ip, name, status):
         status,
         f"{name} mudou para {status}",
         ip,
-        name
+        name,
+        device_id=device_id
     )
 
 
@@ -571,6 +571,9 @@ def save_snapshot():
             for device in devices.values()
             if get_device_online(device)
         )
+        active_ids = {device.get('device_id') for device in devices.values()}
+        with db_connect() as conn:
+            total += sum(row[0] not in active_ids for row in conn.execute('SELECT device_id FROM machine_inventory'))
 
     with db_connect() as conn:
 
@@ -951,7 +954,7 @@ def scan_network():
                         changes.append((
                             ip,
                             device["name"],
-                            "online"
+                            "online", device.get('device_id')
                         ))
 
                     device["online"] = True
@@ -980,7 +983,7 @@ def scan_network():
                         changes.append((
                             ip,
                             device["name"],
-                            "offline"
+                            "offline", device.get('device_id')
                         ))
 
             for ip, latency in found.items():
@@ -1024,11 +1027,11 @@ def scan_network():
         for ip in found:
             schedule_hostname(ip)
 
-        for ip, name, status in changes:
+        for ip, name, status, device_id in changes:
             register_change(
                 ip,
                 name,
-                status
+                status, device_id
             )
 
         save_snapshot()
@@ -1073,68 +1076,65 @@ def scanner_loop():
 @app.route("/api/devices")
 @require_admin
 def api_devices():
-
     now = datetime.now()
-    organizations = organizacao.load_organizations(db_connect)
-
     with lock:
-
+        organizations = organizacao.load_organizations(db_connect)
+        with db_connect() as conn:
+            registered = inventario.inventory_rows(conn)
+            conflicts = conn.execute("SELECT agent_id,ip,description,last_seen FROM identity_conflicts WHERE last_seen>=? ORDER BY last_seen DESC LIMIT 50",((now-timedelta(days=1)).isoformat(),)).fetchall()
+        profiles = {row['device_id']:row for row in registered}
+        by_hardware = defaultdict(list)
+        by_serial = defaultdict(list)
+        for row in registered:
+            row['saved'] = json.loads(row['snapshot'])
+            if row['hardware_key']:
+                by_hardware[row['hardware_key']].append(row)
+            if row['serial_number']:
+                by_serial[row['serial_number']].append(row)
+        candidates = list(devices.values())
+        active_ids = {d.get('device_id') for d in candidates}
+        for row in registered:
+            if row['device_id'] not in active_ids:
+                saved = dict(row['saved'])
+                if not saved:
+                    continue
+                saved.update(device_id=row['device_id'], ip=row['last_ip'],address_active=False,
+                    last_seen=parse_saved_time(saved.get('last_seen')),
+                    last_agent_seen=parse_saved_time(saved.get('last_agent_seen')),
+                    agent_seen=False,latency=None)
+                candidates.append(saved)
         items = []
-
-        for device in devices.values():
-
-            elapsed = (
-                now - device["last_seen"]
-            ).total_seconds()
-
+        for device in candidates:
+            elapsed = max(0, (now-device['last_seen']).total_seconds())
+            device_id = device.get('device_id')
+            profile = profiles.get(device_id, {})
+            active = device.get('address_active', True) and (not device_id or profile.get('current_ip') == device['ip'])
+            online = active and elapsed <= OFFLINE_THRESHOLD
+            last_ping = device.get('last_ping_seen')
+            if not isinstance(last_ping,datetime):
+                last_ping = parse_saved_time(last_ping)
+            possible = {r['device_id']:r for r in [*by_hardware.get(profile.get('hardware_key'),[]), *by_serial.get(profile.get('serial_number'),[])]}
             items.append({
-                "ip": device["ip"],
-                "name": device["name"],
-                "user": device["user"],
-                "os": device["os"],
-                "hw": device.get("hw", {}),
-                "organization": organizations.get(device["ip"], organizacao.empty_organization()),
-                "agent_online": get_agent_online(device),
-                "agent_version": device.get("agent_version", ""),
-                "capabilities": device.get("capabilities", []),
-                "last_agent_seen": device.get("last_agent_seen").isoformat() if device.get("last_agent_seen") else None,
-                "identification_source": identification_source(device),
-                "latency": device.get("latency") if device.get("last_ping_seen") and (now - device["last_ping_seen"]).total_seconds() <= OFFLINE_THRESHOLD else None,
-                "last_ping_seen": device.get("last_ping_seen").isoformat() if device.get("last_ping_seen") else None,
-                "seconds_ago": int(
-                    max(0, elapsed)
-                ),
-                "online": (
-                    elapsed <= OFFLINE_THRESHOLD
-                )
+                'ip':device['ip'],'device_id':device_id,'address_active':bool(active),
+                'name':device['name'],'user':device['user'],'os':device['os'],'hw':device.get('hw',{}),
+                'organization':organizations.get(device_id or device['ip'],organizacao.empty_organization()),
+                'agent_online':bool(active and get_agent_online(device)),
+                'agent_version':device.get('agent_version',''),'capabilities':device.get('capabilities',[]),
+                'last_agent_seen':device['last_agent_seen'].isoformat() if device.get('last_agent_seen') else None,
+                'identification_source':identification_source(device),
+                'latency':device.get('latency') if online and last_ping and (now-last_ping).total_seconds() <= OFFLINE_THRESHOLD else None,
+                'last_ping_seen':last_ping.isoformat() if last_ping else None,'seconds_ago':int(elapsed),'online':bool(online),
+                'agent_id':profile.get('agent_id',''),'serial_number':profile.get('serial_number',''),
+                'mac_addresses':profile.get('mac_addresses',[]),'manufacturer':profile.get('manufacturer',''),'model':profile.get('model',''),
+                'recovery_candidates':[{'device_id':r['device_id'],'name':r['saved'].get('name',r['last_ip']),
+                    'ip':r['last_ip'],'organization':organizations.get(r['device_id'],organizacao.empty_organization())} for r in possible.values() if device_id and r['device_id']!=device_id and inventario.recovery_match(profile,r) and
+                    (now-datetime.fromisoformat(r['last_agent_seen'])).total_seconds()>OFFLINE_THRESHOLD]
             })
-
         status = dict(scan_status)
-
-    items.sort(
-        key=lambda item: (
-            not item["online"],
-            ipaddress.ip_address(item["ip"])
-        )
-    )
-
-    online = sum(
-        1
-        for item in items
-        if item["online"]
-    )
-
-    return jsonify({
-        "devices": items,
-
-        "summary": {
-            "total": len(items),
-            "online": online,
-            "offline": len(items) - online
-        },
-
-        "scan": status
-    })
+    items.sort(key=lambda d:(not d['online'],ipaddress.ip_address(d['ip']),d.get('device_id') or ''))
+    online = sum(d['online'] for d in items)
+    return jsonify(devices=items,summary={'total':len(items),'online':online,'offline':len(items)-online},scan=status,
+        identity_conflicts=[dict(zip(('agent_id','ip','description','last_seen'),row)) for row in conflicts])
 
 
 # ==========================================
@@ -1170,24 +1170,25 @@ COMMAND_TRANSITIONS = {
 def expire_commands(conn):
     now = datetime.now()
     rows = conn.execute("""
-        SELECT id, ip, command, status FROM command_jobs
+        SELECT id, ip, command, status, device_id FROM command_jobs
         WHERE (status IN ('queued', 'delivered') AND requested_at < ?)
            OR (status = 'accepted' AND updated_at < ?)
     """, ((now - timedelta(seconds=COMMAND_TTL)).isoformat(),
           (now - timedelta(seconds=COMMAND_RUNNING_TTL)).isoformat())).fetchall()
-    for job_id, ip, command, status in rows:
+    for job_id, ip, command, status, device_id in rows:
         result = "Prazo excedido; execução não confirmada. Confira a máquina antes de reenviar."
         conn.execute("UPDATE command_jobs SET status='expired', result=?, updated_at=? WHERE id=?",
                      (result, now.isoformat(), job_id))
         conn.execute("""INSERT INTO audit_events
-            (timestamp, category, ip, status, description) VALUES (?, 'comando', ?, 'expired', ?)""",
-            (now.isoformat(), ip, f"{command}: {result} ID: {job_id}"))
+            (timestamp, category, ip, status, description, device_id) VALUES (?, 'comando', ?, 'expired', ?, ?)""",
+            (now.isoformat(), ip, f"{command}: {result} ID: {job_id}",device_id))
 
 
 def create_command(
     ip,
     command,
-    message=""
+    message="",
+    device_id=None
 ):
 
     job_id = str(uuid.uuid4())
@@ -1223,9 +1224,9 @@ def create_command(
                 status,
                 requested_by,
                 requested_at,
-                updated_at
+                updated_at, device_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             job_id,
             ip,
@@ -1234,7 +1235,7 @@ def create_command(
             "queued",
             "admin",
             timestamp,
-            timestamp
+            timestamp, device_id
         ))
 
     audit(
@@ -1251,7 +1252,7 @@ def create_command(
 # ENTREGAR COMANDO AO AGENTE
 # ==========================================
 
-def deliver_command(ip):
+def deliver_command(ip, device_id=None):
 
     timestamp = agora()
 
@@ -1264,10 +1265,11 @@ def deliver_command(ip):
             SELECT id, command, message, status
             FROM command_jobs
             WHERE ip = ?
+              AND COALESCE(device_id,'') = COALESCE(?,'')
               AND status IN ('queued', 'delivered')
             ORDER BY requested_at ASC
             LIMIT 1
-        """, (ip,)).fetchone()
+        """, (ip,device_id)).fetchone()
 
         if not row:
             return None
@@ -1351,137 +1353,66 @@ def get_command(job_id):
     methods=["POST"]
 )
 def api_agent():
-
     if not agent_authenticated():
-
-        return jsonify({
-            "ok": False,
-            "error": "Token inválido"
-        }), 401
-
-    data = request.get_json(
-        silent=True
-    )
-
+        return jsonify(ok=False, error="Token inválido"), 401
+    data = request.get_json(silent=True)
     if not isinstance(data, dict):
-
-        return jsonify({
-            "ok": False,
-            "error": "JSON inválido"
-        }), 400
-
+        return jsonify(ok=False, error="JSON inválido"), 400
     ip = request.remote_addr
-
     if not valid_ip(ip):
-
-        return jsonify({
-            "ok": False,
-            "error": "IP não autorizado"
-        }), 403
-
+        return jsonify(ok=False, error="IP não autorizado"), 403
     try:
         hw, capabilities = validate_telemetry(data)
-    except ValueError as error:
+        profile = inventario.validate_identity(data)
+    except (ValueError, AttributeError) as error:
         return jsonify(ok=False, error=str(error)), 400
-
     now = datetime.now()
-
     with lock:
-
-        old = devices.get(
-            ip,
-            {}
-        )
-
-        name = str(
-            data.get("name")
-            or old.get("name")
-            or ip
-        )[:120]
-
-        user = str(
-            data["user"] if "user" in data else old.get("user", "")
-        )[:120]
-
-        previous_seen = old.get(
-            "last_seen"
-        )
-
-        was_offline = (
-            old.get("online") is False
-        )
-
-        if isinstance(
-            previous_seen,
-            datetime
-        ):
-
-            elapsed = (
-                now - previous_seen
-            ).total_seconds()
-
-            if elapsed > OFFLINE_THRESHOLD:
-                was_offline = True
-
-        device = {
-            "ip": ip,
-            "name": name,
-            "name_source": "agent",
-            "user": user,
-            "os": data.get("os") or old.get("os") or "Desconhecido",
-            "agent_version": data.get("agent_version", "legado"),
-            "capabilities": capabilities,
-            "last_agent_seen": now,
-            "hw": hw,
-            "latency": old.get(
-                "latency",
-                None
-            ),
-            "last_ping_seen": old.get("last_ping_seen"),
-            "last_seen": now,
-            "online": True,
-            "agent_seen": True
-        }
-
+        address_device = devices.get(ip, {})
+        registration = None
+        with db_connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if profile:
+                registration = inventario.enroll(conn, ip, profile, OFFLINE_THRESHOLD)
+                if registration.get('error'):
+                    return jsonify(ok=False, code='identity_conflict', error=registration['error']), 409
+                previous_ip = registration['previous_ip']
+                old = devices.get(previous_ip, {}) if previous_ip else {}
+                if old.get('device_id') != registration['device_id']:
+                    old = registration['previous']
+                    for field in ('last_seen', 'last_agent_seen'):
+                        old[field] = parse_saved_time(old.get(field))
+                if registration['adopt_legacy']:
+                    old = address_device
+            else:
+                if conn.execute("SELECT 1 FROM machine_inventory WHERE current_ip=?", (ip,)).fetchone():
+                    return jsonify(ok=False, code='identity_required', error="Este equipamento já usa identidade permanente. Atualize o agente."), 409
+                old = address_device
+            last = old.get('last_seen')
+            was_offline = isinstance(last, datetime) and (now-last).total_seconds() > OFFLINE_THRESHOLD
+            device = {
+                'ip':ip, 'device_id':registration['device_id'] if registration else None,
+                'name':str(data.get('name') or old.get('name') or ip)[:120], 'name_source':'agent',
+                'user':str(data['user'] if 'user' in data else old.get('user',''))[:120],
+                'os':data.get('os') or old.get('os') or 'Desconhecido',
+                'agent_version':data.get('agent_version','legado'), 'capabilities':capabilities,
+                'last_agent_seen':now,'hw':hw,'latency':address_device.get('latency'),
+                'last_ping_seen':address_device.get('last_ping_seen'),
+                'last_seen':now,'online':True,'agent_seen':True,
+            }
+            write_device(conn, ip, device)
+        if registration and registration['previous_ip'] != ip:
+            previous_ip = registration['previous_ip']
+            if devices.get(previous_ip, {}).get('device_id') == device['device_id']:
+                devices.pop(previous_ip, None)
         devices[ip] = device
+        if was_offline:
+            register_change(ip, device['name'], 'online', device.get('device_id'))
+        job = deliver_command(ip, device.get('device_id'))
+    return jsonify(ok=True, device_id=device.get('device_id'),
+        command_id=job['id'] if job else None, command=job['command'] if job else None,
+        message=job['message'] if job else None)
 
-    save_device(
-        ip,
-        device
-    )
-
-    if was_offline:
-
-        register_change(
-            ip,
-            name,
-            "online"
-        )
-
-    # Busca comando pendente no banco
-    job = deliver_command(ip)
-
-    return jsonify({
-        "ok": True,
-
-        "command_id": (
-            job["id"]
-            if job
-            else None
-        ),
-
-        "command": (
-            job["command"]
-            if job
-            else None
-        ),
-
-        "message": (
-            job["message"]
-            if job
-            else None
-        )
-    })
 
 
 # ==========================================
@@ -1565,11 +1496,10 @@ def api_command(ip):
         if command not in device.get("capabilities", ["msg"]):
             return jsonify(ok=False, error="Comando não habilitado neste agente"), 409
 
-    job_id = create_command(
-        ip,
-        command,
-        message
-    )
+        if device.get('device_id') and data.get('device_id') != device['device_id']:
+            return jsonify(ok=False, error="Identidade alterada. Atualize o painel antes de enviar a ação."), 409
+
+        job_id = create_command(ip, command, message, device.get('device_id'))
 
     if job_id is None:
 
@@ -1661,7 +1591,7 @@ def api_command_status():
         expire_commands(conn)
 
         row = conn.execute("""
-            SELECT status, command
+            SELECT status, command, device_id
             FROM command_jobs
             WHERE id = ?
               AND ip = ?
@@ -1677,7 +1607,12 @@ def api_command_status():
                 "error": "Comando não encontrado"
             }), 404
 
-        previous, command = row
+        previous, command, job_device_id = row
+        if job_device_id:
+            binding = conn.execute("SELECT agent_id,instance_id,hardware_key FROM machine_inventory WHERE device_id=? AND current_ip=?", (job_device_id,ip)).fetchone()
+            if (not binding or data.get('agent_id') != binding[0] or data.get('instance_id') != binding[1]
+                    or (binding[2] and data.get('hardware_key') != binding[2])):
+                return jsonify(ok=False,error="A identidade não corresponde ao destinatário do comando"), 409
 
         # Confirmação repetida
         if previous == status:
@@ -1862,12 +1797,21 @@ def api_events():
             ip,
             name,
             status,
-            description
+            description, device_id
         FROM audit_events
         WHERE 1=1
     """
 
     params = []
+
+    device_id = request.args.get('device_id','').strip()
+    if device_id:
+        try:
+            device_id = inventario.uuid_text(device_id)
+        except ValueError:
+            return jsonify(ok=False,error='Identificador inválido'),400
+        query += ' AND device_id = ?'
+        params.append(device_id)
 
     if ip:
 
@@ -1906,7 +1850,7 @@ def api_events():
         "ip",
         "name",
         "status",
-        "description"
+        "description", "device_id"
     ]
 
     events = [
@@ -1933,6 +1877,7 @@ registrar_relatorios(
 )
 
 organizacao.register_routes(app, require_admin, db_connect, devices, lock, valid_ip)
+inventario.register_routes(app, require_admin, db_connect, devices, lock, OFFLINE_THRESHOLD)
 
 
 # ==========================================
