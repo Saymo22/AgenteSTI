@@ -18,6 +18,7 @@ from collections import defaultdict, deque
 from contextlib import contextmanager
 from sti.comum.configuracao import BASE_DIR, setting
 from sti.servidor import organizacao
+from sti.servidor.identificacao import HostnameResolver
 
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -194,6 +195,37 @@ def get_agent_online(device):
             and (datetime.now() - last).total_seconds() <= OFFLINE_THRESHOLD)
 
 
+def identification_source(device):
+    if device.get("agent_version") or device.get("agent_seen") or device.get("last_agent_seen"):
+        return "agent"
+    if device.get("name_source") in ("agent", "dns", "network"):
+        return device["name_source"]
+    name = device.get("name", "")
+    return "network" if not name or name == device.get("ip") or re.fullmatch(r"host-\d+", name) else "saved"
+
+
+def apply_hostname(ip, hostname):
+    with lock:
+        device = devices.get(ip)
+        if not device or identification_source(device) == "agent":
+            return  # DNS nunca substitui o nome informado pelo agente autenticado.
+        device["name"] = hostname
+        device["name_source"] = "dns"
+        snapshot = dict(device)
+    save_device(ip, snapshot)
+
+
+hostname_resolver = HostnameResolver(apply_hostname)
+
+
+def schedule_hostname(ip):
+    with lock:
+        device = devices.get(ip)
+        if not device or identification_source(device) == "agent":
+            return
+    hostname_resolver.schedule(ip)
+
+
 def validate_telemetry(data):
     for field in ("name", "user", "os", "agent_version"):
         if field in data and (not isinstance(data[field], str) or len(data[field]) > 120):
@@ -327,7 +359,7 @@ def init_db():
 
         # Migração aditiva: preserva bancos e inventários existentes.
         columns = {row[1] for row in conn.execute("PRAGMA table_info(device_state)")}
-        for column in ("last_agent_seen", "agent_version", "capabilities"):
+        for column in ("last_agent_seen", "agent_version", "capabilities", "name_source"):
             if column not in columns:
                 conn.execute(f"ALTER TABLE device_state ADD COLUMN {column} TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_events(timestamp)")
@@ -397,14 +429,15 @@ def save_device(ip, device):
                     user,
                     os,
                     hw,
-                    last_seen, last_agent_seen, agent_version, capabilities
+                    last_seen, last_agent_seen, agent_version, capabilities, name_source
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(ip) DO UPDATE SET
                     name=excluded.name, user=excluded.user, os=excluded.os,
                     hw=excluded.hw, last_seen=excluded.last_seen,
                     last_agent_seen=excluded.last_agent_seen,
-                    agent_version=excluded.agent_version, capabilities=excluded.capabilities
+                    agent_version=excluded.agent_version, capabilities=excluded.capabilities,
+                    name_source=excluded.name_source
                 WHERE excluded.last_seen >= device_state.last_seen
             """, (
                 ip,
@@ -417,7 +450,8 @@ def save_device(ip, device):
                 device["last_seen"].isoformat(),
                 device.get("last_agent_seen").isoformat() if device.get("last_agent_seen") else None,
                 device.get("agent_version", ""),
-                json.dumps(device.get("capabilities", []))
+                json.dumps(device.get("capabilities", [])),
+                identification_source(device)
             ))
 
     except Exception:
@@ -438,7 +472,7 @@ def load_devices():
                 user,
                 os,
                 hw,
-                last_seen, last_agent_seen, agent_version, capabilities
+                last_seen, last_agent_seen, agent_version, capabilities, name_source
             FROM device_state
         """).fetchall()
 
@@ -446,7 +480,7 @@ def load_devices():
 
         for row in rows:
 
-            ip, name, user, os_name, hw_json, last_seen, agent_last, agent_version, capabilities = row
+            ip, name, user, os_name, hw_json, last_seen, agent_last, agent_version, capabilities, name_source = row
 
             try:
 
@@ -464,10 +498,11 @@ def load_devices():
             devices[ip] = {
                 "ip": ip,
                 "name": name or ip,
+                "name_source": name_source,
                 "user": user or "",
                 "os": os_name or "Desconhecido",
                 "hw": hw,
-                "latency": 0,
+                "latency": None,
                 "last_seen": last,
                 "online": (
                     (
@@ -476,7 +511,7 @@ def load_devices():
                     <= OFFLINE_THRESHOLD
                 ),
                 "agent_seen": False,
-                "last_agent_seen": None,
+                "last_agent_seen": parse_saved_time(agent_last),
                 "agent_version": agent_version or "",
                 "capabilities": []
             }
@@ -785,6 +820,13 @@ def index():
 # PING
 # ==========================================
 
+def parse_saved_time(value):
+    try:
+        return datetime.fromisoformat(value) if value else None
+    except (ValueError, TypeError):
+        return None
+
+
 def ping_host(ip):
 
     windows = (
@@ -811,7 +853,7 @@ def ping_host(ip):
             timeout=3
         )
 
-        if result.returncode != 0:
+        if result.returncode != 0 or not re.search(r"ttl[=\s]", result.stdout, re.IGNORECASE):
 
             return False, 0
 
@@ -826,7 +868,7 @@ def ping_host(ip):
                 match.group(1).replace(",", ".")
             )
             if match
-            else 0
+            else None
         )
 
         return True, latency
@@ -914,6 +956,7 @@ def scan_network():
 
                     device["online"] = True
                     device["latency"] = found[ip]
+                    device["last_ping_seen"] = now
                     device["last_seen"] = max(now, device["last_seen"])
 
                     to_save.append((
@@ -945,16 +988,18 @@ def scan_network():
                 if ip not in devices:
 
                     name = (
-                        f"host-{ip.split('.')[-1]}"
+                        ip
                     )
 
                     device = {
                         "ip": ip,
                         "name": name,
+                        "name_source": "network",
                         "user": "Não informado",
                         "os": "Desconhecido",
                         "hw": {},
                         "latency": latency,
+                        "last_ping_seen": now,
                         "online": True,
                         "last_seen": now,
                         "agent_seen": False
@@ -975,6 +1020,9 @@ def scan_network():
 
         for ip, device in to_save:
             save_device(ip, device)
+
+        for ip in found:
+            schedule_hostname(ip)
 
         for ip, name, status in changes:
             register_change(
@@ -1050,7 +1098,9 @@ def api_devices():
                 "agent_version": device.get("agent_version", ""),
                 "capabilities": device.get("capabilities", []),
                 "last_agent_seen": device.get("last_agent_seen").isoformat() if device.get("last_agent_seen") else None,
-                "latency": device.get("latency", 0),
+                "identification_source": identification_source(device),
+                "latency": device.get("latency") if device.get("last_ping_seen") and (now - device["last_ping_seen"]).total_seconds() <= OFFLINE_THRESHOLD else None,
+                "last_ping_seen": device.get("last_ping_seen").isoformat() if device.get("last_ping_seen") else None,
                 "seconds_ago": int(
                     max(0, elapsed)
                 ),
@@ -1350,9 +1400,7 @@ def api_agent():
         )[:120]
 
         user = str(
-            data.get("user")
-            or old.get("user")
-            or ""
+            data["user"] if "user" in data else old.get("user", "")
         )[:120]
 
         previous_seen = old.get(
@@ -1378,16 +1426,18 @@ def api_agent():
         device = {
             "ip": ip,
             "name": name,
+            "name_source": "agent",
             "user": user,
-            "os": data.get("os") or old.get("os") or "Windows",
+            "os": data.get("os") or old.get("os") or "Desconhecido",
             "agent_version": data.get("agent_version", "legado"),
             "capabilities": capabilities,
             "last_agent_seen": now,
             "hw": hw,
             "latency": old.get(
                 "latency",
-                0
+                None
             ),
+            "last_ping_seen": old.get("last_ping_seen"),
             "last_seen": now,
             "online": True,
             "agent_seen": True

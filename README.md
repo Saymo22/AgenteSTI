@@ -215,6 +215,16 @@ Alterações são registradas na auditoria, na categoria **Cadastro de máquinas
 
 O cadastro acompanha o IP registrado no inventário atual. Mudanças de IP por DHCP exigem conferir o cadastro; identificação permanente por equipamento ainda não está implementada.
 
+## Identificação dos dispositivos
+
+Os cartões destacam o endereço IP, sistema operacional completo, usuário, conexão do agente e latência do ping. **Online na rede** indica presença; **Agente conectado** indica telemetria recente. O pop-up reúne esses sinais, a data do último envio, os recursos e o cadastro administrativo. Quando o agente deixa de se comunicar, sistema e usuário são sinalizados como históricos e os recursos atuais ficam indisponíveis.
+
+A varredura tenta resolver nomes pelo DNS reverso do servidor, em segundo plano, com dois trabalhadores e intervalo de 15 minutos entre tentativas por IP. A fila é limitada para não bloquear a varredura quando o DNS está lento. Sem registro PTR/DNS disponível, aparece **Dispositivo sem nome**, sempre com o IP completo. Nomes como `host-33` do inventário antigo são tratados como provisórios; nomes enviados pelo agente têm prioridade sobre o DNS. A faixa padrão continua `10.2.116.0/22`.
+
+Ping e DNS não informam o usuário conectado nem o sistema operacional. Para esses dados, mantenha o agente em execução na máquina e confira `STI_SERVER_IP`, `STI_SERVER_PORT`, `STI_AGENT_TOKEN`, o acesso à porta do servidor e o log do agente. Para receber a correção da escolha da sessão Windows, atualize também o agente nas estações (recompile o executável se essa for a distribuição utilizada). Uma sessão vazia limpa o usuário anterior; contas de serviço conhecidas não são apresentadas como usuário conectado.
+
+Latência sem medição recente aparece como **Não medida**, em vez de `0 ms`. O valor zero continua válido quando retornado pelo ping. Após reiniciar o servidor, o horário histórico do agente é preservado, mas uma nova comunicação é necessária para habilitar ações remotas.
+
 ## APIs e relatórios
 
 | Método | Rota | Uso |

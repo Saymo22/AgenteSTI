@@ -19,6 +19,35 @@ function loadPanel() {
   return {run: code => vm.runInContext(code, context), nodes};
 }
 
+test('cartões distinguem ping, agente, nomes provisórios e latência ausente', () => {
+  const {run} = loadPanel();
+  const html = run(`createDeviceCard({ip:'10.2.117.33',name:'host-33',os:'Desconhecido',user:'Não informado',online:true,latency:null,identification_source:'network'})`);
+  assert.ok(html.includes('Dispositivo sem nome'));
+  assert.ok(html.includes('10.2.117.33'));
+  assert.ok(html.includes('Identificação pendente'));
+  assert.ok(html.includes('Aguardando agente'));
+  assert.ok(html.includes('Não medida'));
+  assert.ok(!html.includes('0 ms'));
+  assert.equal(run(`getDeviceIdentity({online:true,latency:0}).latency`), '0 ms');
+  assert.equal(run(`getOSInfo('Linux Android 14').name`), 'Android');
+  assert.equal(run(`getDeviceIdentity({name:'host-33',agent_online:true}).name`), 'host-33');
+  assert.equal(run(`calcAvgLatency([{online:true,latency:null},{online:true,latency:40}])`), 40);
+  assert.equal(run(`calcAvgLatency([{online:true,latency:null}])`), null);
+});
+
+test('pop-up mostra dados históricos e orienta quando não há agente', () => {
+  const {run,nodes} = loadPanel();
+  run(`state.devices=[{ip:'10.2.116.33',name:'PC-01',os:'Windows 11',user:'EMPRESA\\\\ana',online:true,agent_online:false,agent_version:'3.2.0',latency:null,hw:{cpu:75}}];openModal('10.2.116.33');`);
+  assert.equal(nodes.get('modalLatencyField').textContent,'Não medida');
+  assert.equal(nodes.get('modalAgentValue').textContent,'Sem comunicação');
+  assert.equal(nodes.get('modalUserLabel').textContent,'Último usuário informado');
+  assert.ok(nodes.get('modalIdentificationNotice').textContent.includes('último envio'));
+  assert.equal(nodes.get('modalCpuValue').textContent,'Aguardando');
+  run(`state.devices[0].agent_online=true;state.devices[0].user='';openModal('10.2.116.33',true);`);
+  assert.equal(nodes.get('modalUserField').textContent,'Nenhuma sessão informada');
+  assert.equal(nodes.get('modalUserLabel').textContent,'Usuário conectado');
+});
+
 test('nomes com aspas não criam atributos de evento', () => {
   const {run} = loadPanel();
   const html = run(`createDeviceCard({ip:'10.2.116.33', name:'PC" onmouseover="alert(1)', os:'Windows', online:true})`);

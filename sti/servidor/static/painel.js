@@ -536,8 +536,8 @@ function renderLogs() {
     }
 
     function calcAvgLatency(devices) {
-      const latencies = devices.filter(d => d.online && Number.isFinite(Number(d.latency))).map(d => Number(d.latency));
-      if (!latencies.length) return 0;
+      const latencies = devices.filter(d => d.online && d.latency != null && d.latency !== '' && Number.isFinite(Number(d.latency)) && Number(d.latency) >= 0).map(d => Number(d.latency));
+      if (!latencies.length) return null;
       return Math.round(latencies.reduce((sum, val) => sum + val, 0) / latencies.length);
     }
 
@@ -575,9 +575,9 @@ function renderLogs() {
     function getOSInfo(osString = '') {
       const os = String(osString);
       if (/windows/i.test(os)) return { cls: 'os-win', name: 'Windows', icon: icons.win };
+      if (/android/i.test(os)) return { cls: 'os-android', name: 'Android', icon: icons.android };
       if (/linux/i.test(os)) return { cls: 'os-linux', name: 'Linux', icon: icons.linux };
       if (/apple|mac|ios/i.test(os)) return { cls: 'os-apple', name: 'Apple', icon: icons.apple };
-      if (/android/i.test(os)) return { cls: 'os-android', name: 'Android', icon: icons.android };
       return { cls: 'os-unk', name: os || 'Desconhecido', icon: icons.unknown };
     }
 
@@ -602,47 +602,79 @@ function renderLogs() {
     function createDeviceCard(device) {
       const os = getOSInfo(device.os);
       const status = getStatus(device);
-      const latencyVal = device.online ? `${Number(device.latency || 0)} ms` : 'Offline';
-      const latencyClass = !device.online ? 'offline' : Number(device.latency || 0) > 100 ? 'warn' : 'good';
+      const identity = getDeviceIdentity(device);
       return `
         <article class="device-card ${status.cls}" data-ip="${escapeHtml(device.ip)}" tabindex="0" role="button" aria-label="Gerenciar ${escapeHtml(device.name || device.ip)}">
           <div class="device-head">
             <div style="display:flex;gap:14px;min-width:0;">
               <div class="device-os ${os.cls}">${os.icon}</div>
               <div class="device-title" style="min-width:0;">
-                <strong title="${escapeHtml(device.name || 'Dispositivo')}">${escapeHtml(device.name || 'Dispositivo')}</strong>
-                <span>${escapeHtml(os.name)}</span>
+                <strong title="${escapeHtml(device.name || device.ip)}">${escapeHtml(identity.name)}</strong>
+                <span class="identity-source">${escapeHtml(identity.sourceLabel)}</span>
               </div>
             </div>
-            <span class="status-badge ${status.cls}">${status.label}</span>
+            <span class="status-badge ${status.cls}"><i></i>${status.text}</span>
           </div>
+          <div class="device-address">${icons.ip}<span>${escapeHtml(device.ip)}</span><small>IPv4</small></div>
           <div class="device-info">
             <div class="info-row">
-              <div class="info-head">${icons.ip}<span>IP</span></div>
-              <div class="info-value">${escapeHtml(device.ip || '--')}</div>
+              <div class="info-head">${icons.chip}<span>Sistema operacional</span></div>
+              <div class="info-value ${identity.osKnown ? '' : 'data-missing'}">${escapeHtml(identity.os)}</div>
             </div>
             <div class="info-row">
-              <div class="info-head">${icons.chip}<span>Sistema</span></div>
-              <div class="info-value">${escapeHtml(device.os || '--')}</div>
+              <div class="info-head">${icons.user}<span>${device.agent_online ? 'Usuário conectado' : 'Último usuário informado'}</span></div>
+              <div class="info-value ${identity.userKnown ? '' : 'data-missing'}">${escapeHtml(identity.user)}</div>
             </div>
             <div class="info-row">
-              <div class="info-head">${icons.user}<span>Usuário</span></div>
-              <div class="info-value">${escapeHtml(device.user || 'Não informado')}</div>
+              <div class="info-head">${uiIcon('monitor')}<span>Agente STI</span></div>
+              <div class="info-value agent-state ${device.agent_online ? 'connected' : 'data-missing'}">${escapeHtml(identity.agent)}</div>
             </div>
             <div class="info-row">
-              <div class="info-head">${icons.network}<span>Status</span></div>
-              <div class="info-value">${status.text}</div>
+              <div class="info-head">${icons.network}<span>Latência · ping</span></div>
+              <div class="info-value latency-value ${identity.latencyClass}">${identity.latency}</div>
             </div>
           </div>
           <dl class="organization-summary">
             ${ORGANIZATION_FIELDS.map(field => `<div><dt>${ORGANIZATION_LABELS[field]}</dt><dd>${escapeHtml(device.organization?.[field] || 'Não informado')}</dd></div>`).join('')}
           </dl>
           <div class="device-footer">
-            <span style="color:var(--muted);font-weight:700;">Gerenciar equipamento ${uiIcon('arrow')}</span>
-            <span class="latency-pill ${latencyClass}">${latencyVal}</span>
+            <span class="device-seen">${escapeHtml(timeAgo(device.seconds_ago))}</span>
+            <span class="device-open">Ver detalhes ${uiIcon('arrow')}</span>
           </div>
         </article>
       `;
+    }
+
+    function timeAgo(seconds) {
+      if (seconds == null || !Number.isFinite(Number(seconds))) return 'Sem registro recente';
+      const value = Math.max(0, Number(seconds));
+      if (value < 60) return 'Visto agora';
+      if (value < 3600) return `Visto há ${Math.floor(value / 60)} min`;
+      if (value < 86400) return `Visto há ${Math.floor(value / 3600)} h`;
+      return `Visto há ${Math.floor(value / 86400)} dias`;
+    }
+
+    function getDeviceIdentity(device) {
+      const provisional = !device.name || device.name === device.ip || /^host-\d+$/i.test(device.name);
+      const source = device.identification_source || (device.agent_version || device.agent_online ? 'agent' : provisional ? 'network' : 'dns');
+      const placeholder = !device.name || device.name === device.ip || (source !== 'agent' && provisional);
+      const known = value => Boolean(value && !/^(desconhecido|não informado|unknown|none|n\/a)$/i.test(String(value).trim()));
+      const osKnown = known(device.os);
+      const userKnown = known(device.user);
+      const latencyKnown = device.latency != null && device.latency !== '' && Number.isFinite(Number(device.latency)) && Number(device.latency) >= 0;
+      return {
+        source, osKnown, userKnown,
+        name: placeholder ? 'Dispositivo sem nome' : device.name,
+        sourceLabel: source === 'agent' ? 'Identificado pelo agente' : source === 'dns' ? 'Nome da rede · DNS' : source === 'saved' ? 'Nome salvo no inventário' : 'Identificação pendente',
+        os: osKnown ? device.os : 'Aguardando agente',
+        user: userKnown ? device.user : device.agent_online ? 'Nenhuma sessão informada' : 'Aguardando agente',
+        agent: device.agent_online ? 'Conectado' : source === 'agent' ? 'Sem comunicação' : 'Não identificado',
+        latency: !device.online ? 'Sem resposta' : latencyKnown ? `${Number(device.latency).toLocaleString('pt-BR', {maximumFractionDigits: 1})} ms` : 'Não medida',
+        latencyClass: !device.online ? 'offline' : !latencyKnown ? 'data-missing' : Number(device.latency) > 100 ? 'warn' : 'good',
+        notice: device.agent_online ? 'Agente conectado. Sistema, usuário e recursos foram informados pela máquina.' : source === 'agent'
+          ? 'O agente não enviou dados recentes. Sistema e usuário abaixo são do último envio; os recursos atuais estão indisponíveis.'
+          : 'Equipamento detectado na rede. O DNS pode informar o nome; sistema, usuário e recursos precisam do agente STI em execução com o servidor e o token corretos.'
+      };
     }
 
     function getStatus(device) {
@@ -733,17 +765,28 @@ function renderLogs() {
       const os = getOSInfo(device.os);
       const status = getStatus(device);
       const hw = device.agent_online ? (device.hw || {}) : {};
+      const identity = getDeviceIdentity(device);
 
       document.getElementById('modalOs').innerHTML = os.icon;
       document.getElementById('modalOs').className = `modal-os ${os.cls}`;
-      document.getElementById('modalName').textContent = device.name || 'Dispositivo';
-      document.getElementById('modalSub').textContent = `${device.ip || '--'} • ${device.os || 'Sistema não identificado'}`;
-      document.getElementById('modalDeviceField').textContent = device.name || '--';
+      document.getElementById('modalName').textContent = identity.name;
+      document.getElementById('modalSub').textContent = `${device.ip || '--'} • ${identity.sourceLabel}`;
+      document.getElementById('modalDeviceField').textContent = identity.name;
       document.getElementById('modalIpField').textContent = device.ip || '--';
-      document.getElementById('modalSystemField').textContent = device.os || '--';
-      document.getElementById('modalUserField').textContent = device.user || 'Não informado';
+      document.getElementById('modalSystemField').textContent = identity.os;
+      document.getElementById('modalUserField').textContent = identity.user;
       document.getElementById('modalStatusField').textContent = status.text;
-      document.getElementById('modalLatencyField').textContent = device.online ? `${Number(device.latency || 0)} ms` : 'Offline';
+      document.getElementById('modalLatencyField').textContent = identity.latency;
+      document.getElementById('modalNetworkValue').textContent = status.text;
+      document.getElementById('modalNetworkValue').className = status.cls;
+      document.getElementById('modalAgentValue').textContent = identity.agent;
+      document.getElementById('modalPingValue').textContent = identity.latency;
+      document.getElementById('modalSeenValue').textContent = timeAgo(device.seconds_ago);
+      document.getElementById('modalIdentificationNotice').textContent = identity.notice;
+      document.getElementById('modalIdentificationNotice').className = `identification-notice ${device.agent_online ? 'connected' : 'pending'}`;
+      const agentDate = new Date(device.last_agent_seen);
+      document.getElementById('modalLastAgentField').textContent = device.last_agent_seen && !Number.isNaN(agentDate.getTime()) ? agentDate.toLocaleString('pt-BR') : 'Nenhum envio registrado';
+      document.getElementById('modalUserLabel').textContent = device.agent_online ? 'Usuário conectado' : 'Último usuário informado';
 
       const cpu = clampNumber(hw.cpu);
       setUsage('modalCpuValue', 'modalCpuBar', cpu, cpu !== null ? `${cpu}%` : 'Aguardando');
@@ -768,7 +811,7 @@ function renderLogs() {
       }
 
       document.getElementById('modalUptimeValue').textContent = formatUptime(hw.uptime);
-      document.getElementById('modalPrintersField').textContent = Array.isArray(hw.printers) && hw.printers.length ? hw.printers.join(', ') : 'Nenhuma informada';
+      document.getElementById('modalPrintersField').textContent = !device.agent_online ? 'Aguardando agente' : Array.isArray(hw.printers) && hw.printers.length ? hw.printers.join(', ') : 'Nenhuma informada';
       document.getElementById('modalAgentField').textContent = `${device.agent_online ? 'Conectado' : 'Sem comunicação recente'} • ${device.agent_version || 'Versão não informada'}`;
       for (const [id, command] of [['btnChat', 'msg'], ['btnRestart', 'restart'], ['btnShutdown', 'shutdown']]) {
         const button = document.getElementById(id);
@@ -780,7 +823,11 @@ function renderLogs() {
       document.body.classList.add('modal-open');
       document.getElementById('adminContent').inert = true;
       document.getElementById('adminSidebar').inert = true;
-      if (!refresh) document.getElementById('machineDialog').focus();
+      if (!refresh) {
+        const dialog = document.getElementById('machineDialog');
+        dialog.focus();
+        dialog.scrollTop = 0;
+      }
     }
 
     function setUsage(valueId, barId, pct, text) {
@@ -949,7 +996,7 @@ function renderLogs() {
         d.os || '',
         d.online ? 'Online' : 'Offline',
         d.user || '',
-        Number(d.latency || 0),
+        d.online && d.latency != null ? d.latency : '',
         ...ORGANIZATION_FIELDS.map(field => d.organization?.[field] || '')
       ]);
       const csv = [header, ...rows].map(row => row.map(value => `"${safeCsv(value).replace(/"/g, '""')}"`).join(',')).join('\n');
@@ -1448,6 +1495,11 @@ function initNotifications() {
       const start = Number.parseFloat(element.textContent) || 0;
       const previous = metricAnimations.get(id);
       if (previous && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(previous);
+      if (target == null) {
+        element.textContent = '—';
+        metricAnimations.delete(id);
+        return;
+      }
       const reduced = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
       if (reduced || typeof requestAnimationFrame !== 'function' || start === target) {
         element.textContent = `${target}${suffix}`;
