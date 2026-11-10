@@ -177,10 +177,19 @@ class IntegrationTests(unittest.TestCase):
         self.assertIn('id="modalAgentField"', page)
         self.assertIn('id="modalPrintersField"', page)
         self.assertNotIn('<script>', page)
-        for path in ("/static/painel.js", "/static/painel.css", "/static/vendor/chart.umd.min.js"):
+        for path in ("/static/painel.js", "/static/painel.css", "/static/premium-effects.css", "/static/icons/sti.svg", "/static/vendor/chart.umd.min.js"):
             response = self.client.get(path)
             self.assertEqual(response.status_code, 200)
             response.close()
+
+    def test_original_composition_is_preserved_with_local_icons(self):
+        page=self.client.get('/').get_data(as_text=True)
+        for value in ('sidebar-shell','id="liveTime"','overview-side-stack','id="healthCircle"','id="segmentsGrid"','id="organizationForm"'):
+            self.assertIn(value,page)
+        self.assertIn('Painel de Visão Geral',page)
+        self.assertIn('/static/premium-effects.css',page)
+        self.assertIn('/static/icons/sti.svg#grid',page)
+        self.assertNotIn('command-hero',page)
 
     def test_telemetry_persists_os_metrics_and_capabilities(self):
         self.assertEqual(self.heartbeat().status_code, 200)
