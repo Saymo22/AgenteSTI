@@ -36,6 +36,9 @@ class IntegrationTests(unittest.TestCase):
         self.journal_patch = patch.object(agente, "JOURNAL_FILE", self.folder / "agent.db")
         self.journal_patch.start()
         self.addCleanup(self.journal_patch.stop)
+        self.dns_patch = patch.object(server, "schedule_hostname")
+        self.dns_patch.start()
+        self.addCleanup(self.dns_patch.stop)
         server.devices.clear()
         server.login_attempts.clear()
         agente.processed_commands.clear()
@@ -325,6 +328,7 @@ class IntegrationTests(unittest.TestCase):
         server.init_db()
         server.load_devices()
         self.assertEqual(server.devices[self.ip]["os"], "Windows 11")
+
         self.assertFalse(server.get_agent_online(server.devices[self.ip]))
         # Real old schema, not only an already-migrated database.
         old_path = self.folder / "old.db"
@@ -335,6 +339,72 @@ class IntegrationTests(unittest.TestCase):
             with server.db_connect() as conn:
                 columns = {row[1] for row in conn.execute("PRAGMA table_info(device_state)")}
             self.assertIn("last_agent_seen", columns)
+            self.assertIn("name_source", columns)
+
+    def test_identification_and_unmeasured_latency(self):
+        self.heartbeat()
+        item = self.client.get('/api/devices').json['devices'][0]
+        self.assertEqual(item['identification_source'], 'agent')
+        self.assertIsNone(item['latency'])
+        device = server.devices[self.ip]
+        device.update(latency=0, last_ping_seen=datetime.now())
+        self.assertEqual(self.client.get('/api/devices').json['devices'][0]['latency'], 0)
+        device['last_ping_seen'] -= timedelta(seconds=server.OFFLINE_THRESHOLD + 1)
+        self.assertIsNone(self.client.get('/api/devices').json['devices'][0]['latency'])
+
+    def test_empty_user_clears_previous_session(self):
+        self.heartbeat()
+        self.heartbeat({**self.payload, 'user': ''})
+        self.assertEqual(self.client.get('/api/devices').json['devices'][0]['user'], '')
+
+    def test_dns_identifies_network_devices_but_never_overwrites_agent(self):
+        import ipaddress
+        with patch.object(server, 'NETWORK', ipaddress.ip_network('10.2.116.32/30')), patch.object(server, 'ping_host', return_value=(True, 3)):
+            server.scan_network()
+        item = next(d for d in self.client.get('/api/devices').json['devices'] if d['ip'] == self.ip)
+        self.assertEqual(item['name'], self.ip)
+        self.assertEqual(item['identification_source'], 'network')
+        server.apply_hostname(self.ip, 'sala-204.empresa.local')
+        self.assertEqual(server.identification_source(server.devices[self.ip]), 'dns')
+        server.devices.clear()
+        server.load_devices()
+        self.assertEqual(server.identification_source(server.devices[self.ip]), 'dns')
+        self.heartbeat()
+        server.apply_hostname(self.ip, 'nome-dns-antigo')
+        self.assertEqual(server.devices[self.ip]['name'], self.payload['name'])
+        server.devices.clear()
+        server.load_devices()
+        self.assertIsNotNone(server.devices[self.ip]['last_agent_seen'])
+        self.assertFalse(server.get_agent_online(server.devices[self.ip]))
+        server.apply_hostname(self.ip, 'nome-dns-antigo')
+        self.assertEqual(server.devices[self.ip]['name'], self.payload['name'])
+
+    def test_ping_rejects_unreachable_and_distinguishes_unknown_latency(self):
+        from types import SimpleNamespace
+        for output, expected in [('Resposta de 10.2.116.1: Host de destino inacessível.', (False, 0)),
+                                 ('Resposta de 10.2.116.33: bytes=32 tempo=2ms TTL=128', (True, 2)),
+                                 ('64 bytes from 10.2.116.33: ttl=64 time=0.4 ms', (True, .4)),
+                                 ('Reply from 10.2.116.33: TTL=128', (True, None))]:
+            with patch.object(server.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=output)):
+                self.assertEqual(server.ping_host(self.ip), expected)
+
+    def test_agent_prefers_own_active_session_and_handles_no_login(self):
+        import sys
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        win32ts = SimpleNamespace(WTSActive=0, WTSUserName=5, WTSDomainName=7,
+            WTSEnumerateSessions=Mock(), ProcessIdToSessionId=Mock(),
+            WTSGetActiveConsoleSessionId=Mock(), WTSQuerySessionInformation=Mock())
+        module_patch = patch.dict(sys.modules, {'win32ts': win32ts})
+        module_patch.start()
+        self.addCleanup(module_patch.stop)
+        active = [{'SessionId': 3, 'State': win32ts.WTSActive}, {'SessionId': 7, 'State': win32ts.WTSActive}]
+        def query(handle, session_id, field):
+            return 'EMPRESA' if field == win32ts.WTSDomainName else f'usuario-{session_id}'
+        with patch.object(win32ts, 'WTSEnumerateSessions', return_value=active), patch.object(win32ts, 'ProcessIdToSessionId', return_value=7), patch.object(win32ts, 'WTSGetActiveConsoleSessionId', return_value=3), patch.object(win32ts, 'WTSQuerySessionInformation', side_effect=query):
+            self.assertEqual(agente.obter_usuario(), 'EMPRESA\\usuario-7')
+        with patch.object(win32ts, 'WTSEnumerateSessions', return_value=[]):
+            self.assertEqual(agente.obter_usuario(), '')
 
     def store_local_job(self, job_id):
         with patch.object(agente, "retry_pending_commands"):

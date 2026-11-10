@@ -282,15 +282,24 @@ def obter_usuario():
             import win32ts
             active = [item for item in win32ts.WTSEnumerateSessions()
                       if item["State"] == win32ts.WTSActive]
-            if active:
-                session_id = active[0]["SessionId"]
+            if not active:
+                return ""  # Nenhuma sessão interativa; não anunciar SYSTEM como usuário conectado.
+            process_session = win32ts.ProcessIdToSessionId(os.getpid())
+            console_session = win32ts.WTSGetActiveConsoleSessionId()
+            active.sort(key=lambda item: (item["SessionId"] != process_session,
+                                          item["SessionId"] != console_session, item["SessionId"]))
+            for item in active:
+                session_id = item["SessionId"]
                 user = win32ts.WTSQuerySessionInformation(None, session_id, win32ts.WTSUserName)
                 domain = win32ts.WTSQuerySessionInformation(None, session_id, win32ts.WTSDomainName)
                 if user:
                     return f"{domain}\\{user}" if domain else user
+            return ""
         except Exception:
             logger.debug("Sessão Windows indisponível; usando usuário do processo.", exc_info=True)
         user = getpass.getuser()
+        if user.casefold() in ("system", "local service", "network service", "sistema", "serviço local", "serviço de rede"):
+            return ""
 
         domain = os.environ.get(
             "USERDOMAIN",

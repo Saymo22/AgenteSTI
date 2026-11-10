@@ -436,6 +436,78 @@
 .toast { border: 1px solid #75d7ba44; background: #102b2e; box-shadow: 0 12px 40px #0005; }
 .mobile-navigation,.nav-backdrop { display: none; }
 body.modal-open { overflow: hidden !important; }
+
+/* Identidade e conectividade: presença na rede e telemetria são sinais distintos. */
+.devices-grid { align-items: stretch; }
+.device-card { display: flex; flex-direction: column; gap: 16px; padding: 21px; }
+.device-card .device-head { gap: 10px; margin-bottom: 0; }
+.device-card .device-os { width: 44px; height: 44px; flex-shrink: 0; }
+.device-card .device-os svg { width: 25px; height: 25px; }
+.device-card .device-title strong { font-size: 1.04rem; line-height: 1.35; }
+.device-card .identity-source { font-size: .66rem; line-height: 1.5; color: #9db5c9; }
+.device-card .status-badge { flex-shrink: 0; max-width: 95px; line-height: 1.35; text-align: center; font-size: .64rem; letter-spacing: 0; }
+.device-card .status-badge i { display: none; }
+.device-address { display: flex; align-items: center; gap: 9px; padding: 11px 13px; border: 1px solid #80baff21; border-radius: 12px; background: linear-gradient(100deg,#5d9efc10,#5d9efc02); }
+.device-address svg { width: 17px; height: 17px; color: #8ebaff; }
+.device-address span { font: 600 1.02rem ui-monospace,Consolas,monospace; letter-spacing: .025em; color: #e6f1ff; }
+.device-address small { margin-left: auto; font-size: .59rem; letter-spacing: .09em; color: #8ea9c3; }
+.device-card .device-info { gap: 9px; grid-template-columns: repeat(2,minmax(0,1fr)); }
+.device-card .info-row { padding: 12px 10px; min-width: 0; border: 1px solid #99c3ef13; background: #020f1c33; }
+.device-card .info-head { min-height: 29px; align-items: flex-start; font-size: .62rem; letter-spacing: .015em; line-height: 1.45; text-transform: none; }
+.device-card .info-head svg { width: 14px; height: 14px; flex-shrink: 0; }
+.device-card .info-value { white-space: normal; overflow: visible; overflow-wrap: anywhere; font-size: .84rem; line-height: 1.5; }
+.device-card .latency-value { font-variant-numeric: tabular-nums; font-size: 1rem; }
+.device-card .connected,.latency-value.good { color: #72e4bc; }
+.latency-value.warn { color: #ffd08a; }
+.latency-value.offline { color: #f29bb0; }
+.device-card .data-missing { color: #a0b1c4; font-size: .77rem; font-weight: 500; }
+.device-card .organization-summary { margin: 0; padding-top: 13px; }
+.device-card .organization-summary dd { white-space: normal; overflow-wrap: anywhere; }
+.device-card .device-footer { margin-top: auto; padding-top: 12px; border-top: 1px solid #99b8df14; gap: 8px; }
+.device-card .device-seen { font-size: .66rem !important; }
+.device-open { display: inline-flex; align-items: center; gap: 5px; color: #9ee8d1; font-size: .73rem; font-weight: 700; }
+
+#machineDialog { width: min(1040px,100%); padding: 28px; scrollbar-width: thin; scrollbar-color: #34536a transparent; }
+#machineDialog .modal-top { align-items: center; padding-bottom: 20px; margin-bottom: 20px; border-bottom: 1px solid #91b6df20; }
+#machineDialog .modal-top { position: sticky; top: -28px; z-index: 3; background: #13273b; padding-top: 14px; box-shadow: 0 10px 18px #13273b; }
+#machineDialog .modal-title-wrap { min-width: 0; }
+#machineDialog .modal-title-wrap>div:last-child { min-width: 0; }
+#machineDialog .modal-title-wrap h3 { overflow-wrap: anywhere; letter-spacing: -.035em; }
+#machineDialog .modal-os,#machineDialog .modal-close { flex-shrink: 0; }
+#machineDialog .modal-close { align-self: flex-start; }
+#machineDialog .modal-sub { font-size: .82rem; line-height: 1.6; overflow-wrap: anywhere; }
+.device-connection-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }
+.device-connection-summary>div { padding: 14px; border-radius: 14px; background: #030f2044; border: 1px solid #91b6df22; }
+.device-connection-summary span { display: flex; align-items: center; gap: 6px; color: #a4bad0; font-size: .7rem; }
+.device-connection-summary svg { width: 15px; height: 15px; color: #86b7dc; }
+.device-connection-summary strong { display: block; margin-top: 9px; font-size: .94rem; line-height: 1.5; overflow-wrap: anywhere; }
+.device-connection-summary .online { color: #72e4bc; }
+.device-connection-summary .offline { color: #f29bb0; }
+.device-connection-summary .warning { color: #ffd08a; }
+.identification-notice { margin: 15px 0 21px; padding: 12px 15px; border-left: 3px solid #dcb879; background: #dcb87909; border-radius: 0 9px 9px 0; color: #c7d4e2; font-size: .79rem; line-height: 1.7; }
+.identification-notice.connected { border-left-color: #63d4ab; background: #63d4ab09; }
+#machineDialog .modal-grid { grid-template-columns: 1.15fr 1fr; gap: 14px; }
+#machineDialog .modal-card { min-width: 0; border-color: #91b6df1c; background: #a4c6f904; }
+#machineDialog .modal-card h4 { display: flex; align-items: center; gap: 9px; color: #dceafa; font-size: .89rem; }
+#machineDialog h4 .sti-icon { width: 18px; height: 18px; color: #81cbbd; }
+#machineDialog .modal-info-row { align-items: flex-start; padding: 10px 12px; font-size: .78rem; line-height: 1.6; gap: 12px; }
+#machineDialog .modal-info-row>span { flex: 0 0 36%; font-size: .74rem; }
+#machineDialog .modal-info-row strong { min-width: 0; text-align: right; overflow-wrap: anywhere; font-weight: 600; }
+.modal-agent-details { display: grid; gap: 8px; margin: 0 0 24px; }
+#machineDialog .organization-form { margin-top: 6px; margin-bottom: 15px; }
+.remote-actions-note { color: #a4bad0; font-size: .72rem; line-height: 1.6; margin: 18px 0 10px; }
+#machineDialog .modal-actions { margin-top: 0; }
+@media(max-width:700px) {
+  #machineDialog { padding: 20px 16px; }
+  #machineDialog .modal-top { top: -20px; }
+  #machineDialog .modal-grid { grid-template-columns: minmax(0,1fr); }
+  .device-connection-summary { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+  .device-connection-summary>div { padding: 12px; }
+  .device-connection-summary strong { font-size: .85rem; }
+  #machineDialog .modal-title-wrap h3 { font-size: 1.16rem; }
+  #machineDialog .modal-os { width: 44px; height: 44px; border-radius: 14px; }
+  #machineDialog .modal-os svg { width: 25px; height: 25px; }
+}
 button:focus-visible,a:focus-visible,[role="button"]:focus-visible { outline: 2px solid #80efc6; outline-offset: 4px; }
 .is-scanning>svg { animation: sti-signal 1.5s ease-in-out infinite; }
 @keyframes sti-entrance {
