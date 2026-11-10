@@ -2,7 +2,7 @@
 """
 ============================================
 STI COMMAND CENTER
-AGENTE WINDOWS V3.2 - CLIENTE
+AGENTE WINDOWS V3.3 - CLIENTE
 ============================================
 
 Executável independente, sem arquivo BAT.
@@ -42,13 +42,14 @@ from logging.handlers import RotatingFileHandler
 import requests
 import psutil
 from sti.comum.configuracao import setting, positive_int
+from sti.agente.identidade import collect_identity, persistent_identity, renew_identity
 
 
 # ============================================
 # 1 - CONFIGURAÇÕES DO SERVIDOR
 # ============================================
 
-VERSION = "3.2.0"
+VERSION = "3.3.0"
 
 # IP do computador onde está o app.py
 SERVER_IP = setting("STI_SERVER_IP", "10.2.116.121")
@@ -480,6 +481,7 @@ def coletar_dados():
     hardware = coletar_hardware()
 
     return {
+        **collect_identity(),
         "name": obter_hostname()[:120],
 
         "user": obter_usuario()[:120],
@@ -507,6 +509,7 @@ def confirmar_comando(
 ):
 
     payload = {
+        **collect_identity(),
         "id": str(command_id),
         "status": str(status),
         "result": str(result)[:500]
@@ -708,13 +711,21 @@ def journal_connect():
         conn.close()
 
 
-def init_journal():
+def init_journal(agent_id=None):
     with journal_connect() as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS jobs (
             id TEXT PRIMARY KEY, command TEXT NOT NULL, message TEXT NOT NULL,
             stage TEXT NOT NULL, status TEXT NOT NULL DEFAULT '',
             result TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL
         )""")
+        if agent_id:
+            conn.execute("CREATE TABLE IF NOT EXISTS journal_identity (id INTEGER PRIMARY KEY CHECK(id=1), agent_id TEXT NOT NULL)")
+            row = conn.execute("SELECT agent_id FROM journal_identity WHERE id=1").fetchone()
+            if row is None or row[0] != agent_id:
+                conn.execute("""UPDATE jobs SET stage='acknowledged', status='rejected',
+                    result='Identidade do agente alterada; comando local descartado.', updated_at=?
+                    WHERE stage != 'acknowledged'""", (time.time(),))
+                conn.execute("INSERT OR REPLACE INTO journal_identity VALUES (1, ?)", (agent_id,))
         # Um crash durante a ação tem resultado incerto: nunca repetir a ação.
         conn.execute("""UPDATE jobs SET stage='result', status='failed',
             result='Agente reiniciado durante execução; resultado incerto. Não reexecutado.',
@@ -828,6 +839,10 @@ def comunicar_servidor(
                 "IP não autorizado pelo servidor."
             )
 
+            return False
+
+        if response.status_code == 409:
+            logger.error("Identificação recusada pelo servidor: %s", response.json().get("error", "Conflito de identidade"))
             return False
 
         response.raise_for_status()
@@ -1025,7 +1040,12 @@ def iniciar_agente():
     if not verificar_instancia_unica():
         return
 
-    init_journal()
+    try:
+        agent_id = persistent_identity()
+    except (OSError,ValueError,sqlite3.Error):
+        logger.exception("Não foi possível carregar a identidade persistente; verifique o arquivo e suas permissões.")
+        return
+    init_journal(agent_id)
     diagnosticar_rede()
 
     with requests.Session() as session_http:
@@ -1036,13 +1056,14 @@ def iniciar_agente():
 
             try:
 
-                retry_pending_commands()
                 payload = coletar_dados()
 
                 sucesso = comunicar_servidor(
                     session_http,
                     payload
                 )
+                if sucesso:
+                    retry_pending_commands()
 
 
                 # Mostrar o resultado inicial
@@ -1108,7 +1129,14 @@ def main():
 
     try:
 
-        if "--check" in sys.argv:
+        if "--new-identity" in sys.argv:
+            if not verificar_instancia_unica():
+                return
+            new_id = renew_identity()
+            init_journal(new_id)
+            if sys.stdout is not None:
+                print("Nova identidade criada: " + new_id)
+        elif "--check" in sys.argv:
             import json
             if not validar_configuracoes():
                 raise SystemExit(1)
@@ -1121,6 +1149,10 @@ def main():
         logger.info(
             "Encerramento solicitado."
         )
+
+    except (OSError,sqlite3.Error,ValueError):
+        logger.exception("Falha na configuração ou identidade local. Confira o arquivo e as permissões de acesso.")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

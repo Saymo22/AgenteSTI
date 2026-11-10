@@ -150,6 +150,8 @@ function init() {
       document.getElementById('btnShutdown').addEventListener('click', () => sendCommand('shutdown'));
       document.getElementById('btnChat').addEventListener('click', () => sendCommand('msg'));
       document.getElementById('btnCopyModalIp').addEventListener('click', copyModalIp);
+      document.getElementById('btnDeviceHistory').addEventListener('click', loadDeviceHistory);
+      document.getElementById('btnReconcileIdentity').addEventListener('click', reconcileIdentity);
       document.getElementById('organizationForm').addEventListener('submit', saveOrganization);
       for (const field of ORGANIZATION_FIELDS) {
         document.getElementById(ORGANIZATION_INPUTS[field]).addEventListener('input', () => {
@@ -231,9 +233,13 @@ function init() {
         updateScanState(data.scan || {});
         processStatusChanges(devices);
         state.devices = devices;
+        const conflicts = Array.isArray(data.identity_conflicts) ? data.identity_conflicts : [];
+        const banner = document.getElementById('identityConflictBanner');
+        banner.hidden = !conflicts.length;
+        banner.textContent = conflicts.map(item => `${item.ip}: ${item.description}`).join(' • ');
         updateOrganizationFilters();
         if (state.currentDevice && el.deviceModalOverlay.classList.contains('active')) {
-          openModal(state.currentDevice.ip, true);
+          openModal(deviceKey(state.currentDevice), true);
         }
         const summary = data.summary || buildSummary(devices);
         updateSummary(summary);
@@ -558,7 +564,7 @@ function renderLogs() {
       ));
       if (state.search) {
         devices = devices.filter(d => {
-          const searchable = `${d.name || ''} ${d.ip || ''} ${d.user || ''} ${d.os || ''} ${ORGANIZATION_FIELDS.map(field => d.organization?.[field] || '').join(' ')}`;
+          const searchable = `${d.name || ''} ${d.ip || ''} ${d.user || ''} ${d.os || ''} ${d.device_id || ''} ${d.agent_id || ''} ${d.serial_number || ''} ${d.manufacturer || ''} ${d.model || ''} ${(d.mac_addresses || []).join(' ')} ${ORGANIZATION_FIELDS.map(field => d.organization?.[field] || '').join(' ')}`;
           return normalizeSearch(searchable).includes(normalizeSearch(state.search));
         });
       }
@@ -592,9 +598,9 @@ function renderLogs() {
         `${state.groupBy ? `<h3 class="device-group-heading">${escapeHtml(group.label)}<span>${group.devices.length} máquinas</span></h3>` : ''}${group.devices.map(createDeviceCard).join('')}`
       ).join('');
       document.querySelectorAll('.device-card').forEach(card => {
-        card.addEventListener('click', () => openModal(card.dataset.ip));
+        card.addEventListener('click', () => openModal(card.dataset.reference));
         card.addEventListener('keydown', event => {
-          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openModal(card.dataset.ip); }
+          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openModal(card.dataset.reference); }
         });
       });
     }
@@ -604,7 +610,7 @@ function renderLogs() {
       const status = getStatus(device);
       const identity = getDeviceIdentity(device);
       return `
-        <article class="device-card ${status.cls}" data-ip="${escapeHtml(device.ip)}" tabindex="0" role="button" aria-label="Gerenciar ${escapeHtml(device.name || device.ip)}">
+        <article class="device-card ${status.cls}" data-ip="${escapeHtml(device.ip)}" data-reference="${escapeHtml(deviceKey(device))}" tabindex="0" role="button" aria-label="Gerenciar ${escapeHtml(device.name || device.ip)}">
           <div class="device-head">
             <div style="display:flex;gap:14px;min-width:0;">
               <div class="device-os ${os.cls}">${os.icon}</div>
@@ -615,7 +621,8 @@ function renderLogs() {
             </div>
             <span class="status-badge ${status.cls}"><i></i>${status.text}</span>
           </div>
-          <div class="device-address">${icons.ip}<span>${escapeHtml(device.ip)}</span><small>IPv4</small></div>
+          <div class="device-address">${icons.ip}<span>${escapeHtml(device.ip)}</span><small>${device.address_active === false ? 'Último IP' : 'IPv4'}</small></div>
+          <div class="device-identity-tag">${uiIcon('shield')} ${device.device_id ? `Identidade permanente · ${escapeHtml(device.device_id.slice(0,8))}` : 'Identificação por IP · atualize o agente'}</div>
           <div class="device-info">
             <div class="info-row">
               <div class="info-head">${icons.chip}<span>Sistema operacional</span></div>
@@ -748,13 +755,21 @@ function renderLogs() {
       el.mapGroups.innerHTML = groupHtml;
     }
 
-    function openModal(ip, refresh = false) {
-      const device = state.devices.find(d => String(d.ip) === String(ip));
-      if (!device) return;
+    function deviceKey(device) { return String(device.device_id || device.ip || ''); }
+
+    function openModal(reference, refresh = false) {
+      const device = state.devices.find(d => deviceKey(d) === String(reference));
+      if (!device) {
+        if (refresh) {
+          for (const id of ['btnChat','btnRestart','btnShutdown']) document.getElementById(id).disabled = true;
+          document.getElementById('modalIdentificationNotice').textContent = 'O cadastro mudou. Feche esta janela e abra o equipamento novamente.';
+        }
+        return;
+      }
       state.currentDevice = device;
       const editor = state.organizationEditor;
       if (!refresh || (!editor.dirty && !editor.saving)) {
-        editor.ip = ip;
+        editor.ip = deviceKey(device);
         editor.dirty = false;
         editor.revision = device.organization?.updated_at || '';
         for (const field of ORGANIZATION_FIELDS) {
@@ -772,7 +787,7 @@ function renderLogs() {
       document.getElementById('modalName').textContent = identity.name;
       document.getElementById('modalSub').textContent = `${device.ip || '--'} • ${identity.sourceLabel}`;
       document.getElementById('modalDeviceField').textContent = identity.name;
-      document.getElementById('modalIpField').textContent = device.ip || '--';
+      document.getElementById('modalIpField').textContent = `${device.ip || '--'}${device.address_active === false ? ' (último IP; sem vínculo atual)' : ''}`;
       document.getElementById('modalSystemField').textContent = identity.os;
       document.getElementById('modalUserField').textContent = identity.user;
       document.getElementById('modalStatusField').textContent = status.text;
@@ -786,6 +801,19 @@ function renderLogs() {
       document.getElementById('modalIdentificationNotice').className = `identification-notice ${device.agent_online ? 'connected' : 'pending'}`;
       const agentDate = new Date(device.last_agent_seen);
       document.getElementById('modalLastAgentField').textContent = device.last_agent_seen && !Number.isNaN(agentDate.getTime()) ? agentDate.toLocaleString('pt-BR') : 'Nenhum envio registrado';
+      document.getElementById('modalDeviceIdField').textContent = device.device_id || 'Identificação por IP; atualize o agente';
+      document.getElementById('modalAgentIdField').textContent = device.agent_id || 'Não informado';
+      document.getElementById('modalSerialField').textContent = device.serial_number || 'Não disponível';
+      document.getElementById('modalMacField').textContent = (device.mac_addresses || []).join(' • ') || 'Não informado';
+      document.getElementById('modalModelField').textContent = [device.manufacturer, device.model].filter(Boolean).join(' · ') || 'Não disponível';
+      document.getElementById('btnDeviceHistory').disabled = !device.device_id;
+      if (!refresh) document.getElementById('deviceIdentityHistory').innerHTML = '';
+      const recovery = device.agent_online ? device.recovery_candidates || [] : [];
+      document.getElementById('identityRecovery').hidden = !recovery.length;
+      const recoverySelect = document.getElementById('identityRecoveryTarget');
+      const selectedRecovery = recoverySelect.value;
+      recoverySelect.innerHTML = '<option value="">Selecione o cadastro anterior</option>' + recovery.map(item => `<option value="${escapeHtml(item.device_id)}">${escapeHtml(item.name)} · ${escapeHtml(item.ip)} · ${escapeHtml(item.device_id.slice(0,8))}</option>`).join('');
+      if (recovery.some(item => item.device_id === selectedRecovery)) recoverySelect.value = selectedRecovery;
       document.getElementById('modalUserLabel').textContent = device.agent_online ? 'Usuário conectado' : 'Último usuário informado';
 
       const cpu = clampNumber(hw.cpu);
@@ -833,6 +861,49 @@ function renderLogs() {
     function setUsage(valueId, barId, pct, text) {
       document.getElementById(valueId).textContent = text;
       document.getElementById(barId).style.width = `${Math.max(0, Math.min(100, Number(pct) || 0))}%`;
+    }
+
+    async function loadDeviceHistory() {
+      const deviceId = state.currentDevice?.device_id;
+      if (!deviceId) return;
+      const button = document.getElementById('btnDeviceHistory');
+      button.disabled = true;
+      const container = document.getElementById('deviceIdentityHistory');
+      container.textContent = 'Consultando histórico…';
+      try {
+        const response = await checkedFetch(`/api/events?device_id=${encodeURIComponent(deviceId)}&limit=20`);
+        const data = await response.json();
+        if (state.currentDevice?.device_id !== deviceId) return;
+        container.innerHTML = (data.events || []).map(event => `<article><time>${escapeHtml(new Date(event.timestamp).toLocaleString('pt-BR'))}</time><strong>${escapeHtml(event.ip || '')} · ${escapeHtml(event.status)}</strong><p>${escapeHtml(event.description)}</p></article>`).join('') || '<p>Nenhum evento registrado.</p>';
+      } catch (error) {
+        if (state.currentDevice?.device_id === deviceId) container.textContent = error.message;
+      } finally {
+        button.disabled = !state.currentDevice?.device_id;
+      }
+    }
+
+    async function reconcileIdentity() {
+      const device = state.currentDevice;
+      const targetId = document.getElementById('identityRecoveryTarget').value;
+      const target = device?.recovery_candidates?.find(item => item.device_id === targetId);
+      if (!device?.device_id || !target) return showToast('Selecione o cadastro anterior.');
+      if (state.organizationEditor.dirty || state.organizationEditor.saving) return showToast('Salve ou descarte a edição do cadastro antes de recuperar a identidade.');
+      const location = target.organization || {};
+      if (!confirm(`Vincular ${device.name} (${device.ip}) ao cadastro ${target.name} (${target.ip}, ID ${targetId})?\nSetor: ${location.department || 'Não informado'}\nSala: ${location.room || 'Não informada'}\nResponsável: ${location.responsible || 'Não informado'}\nO cadastro anterior e seu histórico serão preservados. Comandos pendentes serão encerrados.`)) return;
+      const button = document.getElementById('btnReconcileIdentity');
+      button.disabled = true;
+      try {
+        const response = await checkedFetch(`/api/inventory/${encodeURIComponent(device.device_id)}/reconcile`, {
+          method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target_device_id:targetId,expected_agent_id:device.agent_id})
+        });
+        const data = await response.json();
+        closeModal();
+        await loadDevices();
+        openModal(data.device_id);
+        showToast('Instalação vinculada ao cadastro anterior.');
+        loadEvents();
+      } catch (error) { showToast(error.message); }
+      finally { button.disabled = false; }
     }
 
     async function copyModalIp() {
@@ -924,7 +995,7 @@ function renderLogs() {
         const response = await checkedFetch(`/api/command/${encodeURIComponent(ip)}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ command, message: message || '' })
+          body: JSON.stringify({ command, message: message || '', device_id: state.currentDevice.device_id || null })
         });
         const data = await response.json();
         pendingCommands.set(data.command_id, { ip, command, status: 'queued' });
@@ -989,7 +1060,7 @@ function renderLogs() {
         showToast('Nenhum dado para exportar.');
         return;
       }
-      const header = ['IP','Dispositivo','Sistema','Status','Usuário','Latência(ms)','Setor','Sala','Responsável'];
+      const header = ['IP','Dispositivo','Sistema','Status','Usuário','Latência(ms)','Setor','Sala','Responsável','ID equipamento','UUID instalação','Número de série','MACs','Fabricante','Modelo','Vínculo IP'];
       const rows = devices.map(d => [
         d.ip || '',
         d.name || '',
@@ -997,7 +1068,8 @@ function renderLogs() {
         d.online ? 'Online' : 'Offline',
         d.user || '',
         d.online && d.latency != null ? d.latency : '',
-        ...ORGANIZATION_FIELDS.map(field => d.organization?.[field] || '')
+        ...ORGANIZATION_FIELDS.map(field => d.organization?.[field] || ''),
+        d.device_id || '',d.agent_id || '',d.serial_number || '',(d.mac_addresses || []).join(' | '),d.manufacturer || '',d.model || '',d.address_active === false ? 'Último IP conhecido' : 'Atual'
       ]);
       const csv = [header, ...rows].map(row => row.map(value => `"${safeCsv(value).replace(/"/g, '""')}"`).join(',')).join('\n');
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -1111,12 +1183,13 @@ function processStatusChanges(devices) {
 
         const current = device.online === true;
 
-        const previous = state.previousStatus[ip];
+        const key = deviceKey(device);
+        const previous = state.previousStatus[key];
 
         // Na primeira leitura não dispara alerta
         if (previous === undefined) {
 
-            state.previousStatus[ip] = current;
+            state.previousStatus[key] = current;
             return;
 
         }
@@ -1126,7 +1199,7 @@ function processStatusChanges(devices) {
             return;
         }
 
-        state.previousStatus[ip] = current;
+        state.previousStatus[key] = current;
 
         const nome = device.name || ip;
 
@@ -1465,7 +1538,7 @@ function initNotifications() {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
         });
         const data = await response.json();
-        const device = state.devices.find(item => item.ip === ip);
+        const device = state.devices.find(item => deviceKey(item) === ip);
         if (device) device.organization = data.organization;
         editor.revision = data.organization.updated_at;
         editor.dirty = false;
@@ -1566,7 +1639,7 @@ function initNotifications() {
       if (el.deviceModalOverlay.classList.contains('active')) {
         if (event.key === 'Escape') { event.preventDefault(); closeModal(); }
         if (event.key === 'Tab') {
-          const elements = [...document.getElementById('machineDialog').querySelectorAll('button:not(:disabled),input:not(:disabled)')].filter(item => item.offsetParent !== null);
+          const elements = [...document.getElementById('machineDialog').querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),a[href],textarea:not(:disabled)')].filter(item => item.offsetParent !== null);
           const first = elements[0], last = elements[elements.length-1];
           if (event.shiftKey && (document.activeElement === first || document.activeElement.id === 'machineDialog')) { event.preventDefault(); last?.focus(); }
           else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }

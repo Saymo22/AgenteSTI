@@ -466,6 +466,17 @@ body.modal-open { overflow: hidden !important; }
 .device-card .device-footer { margin-top: auto; padding-top: 12px; border-top: 1px solid #99b8df14; gap: 8px; }
 .device-card .device-seen { font-size: .66rem !important; }
 .device-open { display: inline-flex; align-items: center; gap: 5px; color: #9ee8d1; font-size: .73rem; font-weight: 700; }
+.device-identity-tag { display: flex; gap: 6px; align-items: center; font-size: .66rem; color: #a8bcd1; margin-top: -6px; line-height: 1.5; }
+.device-identity-tag svg { width: 14px; height: 14px; color: #82c9b3; flex-shrink: 0; }
+[hidden] { display: none !important; }
+.identity-recovery { padding: 18px; border: 1px solid #dcb87944; border-radius: 16px; background: #dcb87908; margin: 0 0 20px; }
+.identity-recovery h4 { display: flex; gap: 8px; align-items: center; color: #efd1a0; }
+.identity-recovery p,.identity-recovery label { color: #b5c8dc; font-size: .78rem; line-height: 1.7; margin: 10px 0; display: block; }
+.identity-recovery select { width: 100%; min-width: 0; padding: 12px; border-radius: 10px; border: 1px solid #8ab5de44; background: #0b1b2c; color: #e8f2ff; margin-bottom: 12px; }
+.device-history-section { margin: 0 0 22px; }
+#deviceIdentityHistory { max-height: 320px; overflow: auto; font-size: .76rem; line-height: 1.7; }
+#deviceIdentityHistory article { border-left: 2px solid #69bca4; margin: 12px 0; padding: 8px 14px; background: #a4c6f905; overflow-wrap: anywhere; }
+#deviceIdentityHistory time { display: block; color: #91a9c2; font-size: .68rem; }
 
 #machineDialog { width: min(1040px,100%); padding: 28px; scrollbar-width: thin; scrollbar-color: #34536a transparent; }
 #machineDialog .modal-top { align-items: center; padding-bottom: 20px; margin-bottom: 20px; border-bottom: 1px solid #91b6df20; }

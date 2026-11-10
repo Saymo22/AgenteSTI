@@ -1,4 +1,4 @@
-# STI Command Center — V3.2
+# STI Command Center — V3.3
 
 Monitoramento e gerenciamento de máquinas Windows, com servidor Flask/Waitress, banco SQLite e agente para os computadores dos usuários.
 
@@ -44,7 +44,7 @@ AgenteSTI/
 │   ├── dev.txt                 # Dependências para build
 │   └── windows-lock.txt        # Versões validadas no Windows
 ├── packaging/
-│   ├── STI_Agente_V3_2.spec     # Build atual
+│   ├── STI_Agente_V3_3.spec     # Build atual
 │   └── legacy/                 # Especificações antigas
 └── tests/                      # Testes Python e JavaScript
 ```
@@ -146,6 +146,7 @@ Execute na sessão interativa do usuário, para que as mensagens apareçam no de
 | `STI_SERVER_PORT` | `5000` | Porta do servidor. |
 | `STI_AGENT_TOKEN` | vazio | Mesmo token do servidor. |
 | `STI_USE_HTTPS` | `false` | Usa um endpoint HTTPS já configurado. |
+| `STI_IDENTITY_FILE` | automático | Caminho opcional para o SQLite de identidade da estação. Não reutilize o arquivo entre computadores. |
 | `STI_ALLOW_POWER_COMMANDS` | `false` | Habilita explicitamente reiniciar/desligar nesse agente. |
 | `AGENT_INTERVAL` | `30` | Pausa após envio bem-sucedido, em segundos. |
 | `RETRY_INTERVAL` | `10` | Pausa após falha, em segundos. |
@@ -159,7 +160,7 @@ Para validar coleta e configuração sem iniciar o loop, sem comunicar com o ser
 ```powershell
 .\.venv\Scripts\python.exe agente.py --check
 # Ou, na máquina do usuário:
-.\STI_Agente_V3_2.exe --check
+.\STI_Agente_V3_3.exe --check
 ```
 
 O diagnóstico mostra dados da máquina local. RAM e disco são enviados em unidades de 1024³ bytes; falha na consulta de disco é enviada como valor ausente, sem fingir disco de tamanho zero.
@@ -182,10 +183,10 @@ No Windows:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements/dev.txt
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm packaging/STI_Agente_V3_2.spec
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm packaging/STI_Agente_V3_3.spec
 ```
 
-Saída: `dist\STI_Agente_V3_2.exe`. A configuração atual gera o executável sem console (`console=False`); a execução pelo PyCharm mantém seu terminal. Para diagnóstico com saída visível, use o fonte ou gere um build com console. Os `.spec` antigos ficam em `packaging/legacy/` como alternativas de nome; use V3.2 para a distribuição atual. O JSON com credenciais não é embutido no build.
+Saída: `dist\STI_Agente_V3_3.exe`. A configuração atual gera o executável sem console (`console=False`); a execução pelo PyCharm mantém seu terminal. Para diagnóstico com saída visível, use o fonte ou gere um build com console. Os `.spec` antigos ficam em `packaging/legacy/` como alternativas de nome; use V3.3 para a distribuição atual. O JSON com credenciais não é embutido no build.
 
 ## Acabamento visual do painel
 
@@ -209,11 +210,11 @@ O layout estrutural continua em `sti/servidor/static/painel.css`; os efeitos e r
 
 O responsável é um dado administrativo e pode ser diferente do usuário conectado ao Windows. O cadastro pode ser editado mesmo com a máquina offline e é incluído no CSV de inventário, respeitando os filtros selecionados. Os indicadores gerais continuam mostrando toda a rede.
 
-Os dados ficam na tabela `device_organization` do mesmo banco SQLite. A tabela é criada automaticamente na inicialização, preservando o inventário existente. Os heartbeats do agente e as varreduras não modificam esse cadastro; não é necessário atualizar os agentes para usar o recurso.
+Os dados de equipamentos identificados ficam em `machine_organization`; `device_organization` mantém o cadastro legado por IP, no mesmo SQLite. A tabela é criada automaticamente na inicialização, preservando o inventário existente. Os heartbeats do agente e as varreduras não modificam esse cadastro; para a identificação permanente, atualize os agentes para V3.3.
 
 Alterações são registradas na auditoria, na categoria **Cadastro de máquinas** (`inventario`). A atualização automática da tela preserva os campos em edição. Se outra sessão salvar primeiro, o painel avisa sobre o conflito em vez de sobrescrever silenciosamente.
 
-O cadastro acompanha o IP registrado no inventário atual. Mudanças de IP por DHCP exigem conferir o cadastro; identificação permanente por equipamento ainda não está implementada.
+Com o agente V3.3, o cadastro acompanha o ID permanente do equipamento, mesmo após mudanças de IP. Agentes anteriores continuam operando por IP até serem atualizados. Na primeira comunicação do agente novo, o cadastro administrativo legado do endereço atual é associado à identidade permanente uma única vez.
 
 ## Identificação dos dispositivos
 
@@ -225,6 +226,45 @@ Ping e DNS não informam o usuário conectado nem o sistema operacional. Para es
 
 Latência sem medição recente aparece como **Não medida**, em vez de `0 ms`. O valor zero continua válido quando retornado pelo ping. Após reiniciar o servidor, o horário histórico do agente é preservado, mas uma nova comunicação é necessária para habilitar ações remotas.
 
+## Identidade permanente, MACs e reinstalações
+
+O agente V3.3 gera um **UUID da instalação** e o persiste em `%ProgramData%\STI\identity.db`. Reiniciar ou substituir o executável não altera esse UUID. `STI_IDENTITY_FILE` permite escolher outro caminho persistente. Se o arquivo compartilhado já existir e puder ser lido, o agente reutiliza o UUID mesmo com acesso somente leitura. Se não puder criar o arquivo compartilhado, tenta `%LOCALAPPDATA%\STI\identity.db` e registra o fallback no log; nesse caso, mantenha a mesma conta para executá-lo. Um arquivo corrompido não é substituído silenciosamente. Faça a instalação com acesso ao mesmo arquivo de identidade durante as atualizações.
+
+O servidor cria seu próprio **ID permanente do equipamento**, associado ao UUID recebido. Setor, sala, responsável e novos eventos acompanham esse ID; o IP passa a ser apenas o endereço atual. Os cartões, o pop-up, a busca e o CSV mostram as referências de identidade. A busca também encontra MAC, número de série, fabricante e modelo. O pop-up permite consultar os últimos 20 eventos do equipamento; o relatório aceita `device_id` para filtrar e exportar o histórico entre diferentes IPs.
+
+O agente informa os MACs unicast das interfaces disponíveis, incluindo placas virtuais quando houver. A coleta de série, fabricante, modelo e UUID SMBIOS usa CIM do Windows com prazo limitado; valores genéricos de série são descartados. Uma referência hash do SMBIOS (ou de `MachineGuid` como fallback) auxilia a detecção de cópias e a revisão de reinstalações. MAC, nome e série isolados **não provocam união automática** de cadastros.
+
+Quando o IP muda, o cadastro permanece na mesma identidade. Comandos pendentes são encerrados e devem ser solicitados novamente no endereço atualizado. Se outro equipamento assumir o IP antigo, ele recebe seu próprio cadastro. O equipamento anterior continua no inventário, offline, com **Último IP**, preservando seu cadastro e histórico. Ações já executadas não são desfeitas por essa mudança.
+
+### Atualização e migração
+
+1. Faça backup do `monitor.db` e atualize o servidor primeiro. A migração adiciona colunas e tabelas, preservando as tabelas existentes.
+2. Distribua `STI_Agente_V3_3.exe` com a configuração de agente já utilizada, mantendo IP do servidor, token e permissões de energia. A rede padrão continua `10.2.116.0/22`.
+3. Preserve o arquivo `identity.db` nas atualizações. O primeiro envio do agente atualizado associa o cadastro legado do seu IP à identidade permanente. Antes desse primeiro envio, o inventário antigo só possui a associação por IP; confira o cadastro se houve troca de equipamento naquele endereço.
+4. Confirme o ID permanente, os MACs e a série no pop-up. Agentes antigos funcionam nos endereços ainda sem identidade permanente; um agente antigo é recusado em endereço já vinculado a uma identidade nova, para não sobrescrevê-la.
+
+O banco acrescenta `machine_inventory`, `machine_organization`, `identity_conflicts` e `retired_agent_ids`, além de `device_id` em estado, auditoria e comandos. A auditoria anterior por IP é associada no primeiro registro legado; eventos novos usam a identidade diretamente.
+
+### Reinstalação do Windows
+
+Se o arquivo de identidade for preservado e a referência de hardware permanecer igual, o agente mantém seu UUID. Se a instalação gerar um UUID novo, aparece um cadastro separado. O pop-up mostra **Possível reinstalação** quando encontra um cadastro sem envio recente com a mesma referência de hardware, ou série válida igual e pelo menos um MAC em comum.
+
+Confira os nomes, IDs, IPs, série e MACs; selecione o cadastro anterior e clique em **Recuperar cadastro anterior**. A confirmação mostra o setor, a sala e o responsável que serão preservados. A operação reúne o histórico, preserva o cadastro anterior e encerra comandos pendentes. Um cadastro que ainda recebe telemetria recente não pode ser recuperado dessa forma. Sem referências compatíveis, os cadastros permanecem separados para conferência, sem adivinhar a associação.
+
+### Clonagem e UUID duplicado
+
+Não inclua `identity.db` nem `commands.db` em imagens de distribuição. Ao detectar referência de hardware diferente, do mesmo tipo daquela gravada no arquivo copiado, o agente gera outro UUID. Uma mudança temporária de método de coleta (SMBIOS para MachineGuid, por exemplo) preserva a identidade anterior. O diário local encerra comandos da identidade anterior, sem executá-los na nova máquina.
+
+O servidor recusa o mesmo UUID com hardware diferente, ou com outra instância recente em outro IP, registra o conflito e o apresenta no painel. Uma mesma instância pode mudar de IP normalmente. Se o UUID e todas as referências forem clonados, a origem não pode ser distinguida com garantia apenas por esses dados, sobretudo se as cópias não funcionarem simultaneamente.
+
+Para renovar explicitamente a identidade da cópia, pare o agente e execute pelo terminal do PyCharm:
+
+```powershell
+.\.venv\Scripts\python.exe agente.py --new-identity
+```
+
+Ou use `STI_Agente_V3_3.exe --new-identity` na estação. A operação é local, não envia comandos e exige que outra instância não esteja rodando. O novo UUID fica registrado no log. Depois, inicie o agente normalmente e confira o novo equipamento. UUIDs de instalações substituídas pela recuperação são recusados, evitando que uma cópia antiga retome o cadastro.
+
 ## APIs e relatórios
 
 | Método | Rota | Uso |
@@ -232,15 +272,16 @@ Latência sem medição recente aparece como **Não medida**, em vez de `0 ms`. 
 | GET/POST | `/login` | Formulário e login. Cinco tentativas por IP a cada cinco minutos. |
 | POST | `/logout` | Encerra a sessão administrativa. |
 | GET | `/api/devices` | Inventário, disponibilidade da máquina/agente, capacidades e progresso do scanner. |
-| PATCH | `/api/devices/<ip>/organization` | Sessão administrativa; edita setor (`department`), sala (`room`) e responsável (`responsible`). |
+| PATCH | `/api/devices/<ip>/organization` | Sessão administrativa; aceita ID permanente ou IP legado; edita setor (`department`), sala (`room`) e responsável (`responsible`). |
+| POST | `/api/inventory/<device_id>/reconcile` | Sessão administrativa; recupera um cadastro anterior após revisão de reinstalação. |
 | POST | `/api/scan` | Solicita varredura manual. |
 | GET | `/api/history` | Últimos 300 snapshots. |
-| GET | `/api/events` | Auditoria; filtros `ip`, `category`, `limit` (1–500). |
-| POST | `/api/command/<ip>` | JSON com `command` e `message`, quando for `msg`; retorna `202` e `command_id`. |
+| GET | `/api/events` | Auditoria; filtros `device_id`, `ip`, `category`, `limit` (1–500). |
+| POST | `/api/command/<ip>` | JSON com `command`, `message` quando for `msg`, e `device_id` para máquinas identificadas; retorna `202` e `command_id`. |
 | GET | `/api/commands/<id>` | Estado e resultado do comando. |
 | POST | `/api/agent` | Telemetria e recebimento de comandos; exige `X-Agent-Token`. |
 | POST | `/api/agent/command-status` | JSON com `id`, `status`, `result`; exige token e mesmo IP de destino. |
-| GET | `/relatorios` | Relatórios com filtros `start`, `end`, `ip`, `category`. |
+| GET | `/relatorios` | Relatórios com filtros `start`, `end`, `device_id`, `ip`, `category`. |
 | GET | `/api/report/events.csv` | Exportação dos eventos com os mesmos filtros. |
 
 Todas as rotas administrativas exigem sessão. A página de relatórios mostra até 500 eventos e o CSV até 10.000; datas no formato `AAAA-MM-DD`. Categorias: `dispositivo`, `inventario`, `comando`, `scanner`, `seguranca`.
@@ -267,7 +308,7 @@ Não houve implantação nem teste nas máquinas reais dos usuários. Antes de d
 ## Operação
 
 - Faça backup e restrinja acesso ao banco e aos arquivos de configuração. O histórico ainda não possui retenção automática.
-- HTTP continua disponível para a rede interna. Para criptografar credenciais e telemetria, configure um endpoint HTTPS; ativar as flags isoladamente não cria certificado nem TLS. O servidor identifica agentes pelo IP da conexão direta. Um proxy que oculte esse IP exige adaptar a identificação antes de usá-lo.
+- HTTP continua disponível para a rede interna. Para criptografar credenciais e telemetria, configure um endpoint HTTPS; ativar as flags isoladamente não cria certificado nem TLS. O servidor usa o UUID para identificar o equipamento e o IP da conexão direta como endereço atual. Um proxy que oculte o IP das estações continua exigindo adaptação antes de ser usado.
 - Não publique configurações reais nem reutilize o token que aparecia no código antigo. Os arquivos gerados usam um novo token; atualize os agentes junto com o servidor.
 - O repositório não define uma licença própria. A licença do Chart.js está em `sti/servidor/static/vendor/Chart.js-LICENSE.md`.
 

@@ -255,6 +255,7 @@
                 </select></label>
                 <button type="button" class="tool-btn" id="clearOrganizationFilters">Limpar filtros</button>
                 <p id="organizationResultCount" aria-live="polite"></p>
+                <p id="identityConflictBanner" class="identification-notice pending" role="status" hidden></p>
               </div>
               <div class="devices-grid" id="devicesGrid"></div>
             </article>
@@ -436,9 +437,27 @@
       </div>
 
       <section class="modal-agent-details" aria-label="Informações do agente">
+        <div class="modal-info-row"><span>ID permanente do equipamento</span><strong class="mono" id="modalDeviceIdField">--</strong></div>
+        <div class="modal-info-row"><span>UUID da instalação</span><strong class="mono" id="modalAgentIdField">--</strong></div>
+        <div class="modal-info-row"><span>Fabricante e modelo</span><strong id="modalModelField">--</strong></div>
+        <div class="modal-info-row"><span>Número de série</span><strong id="modalSerialField">--</strong></div>
+        <div class="modal-info-row"><span>Endereços MAC</span><strong class="mono" id="modalMacField">--</strong></div>
         <div class="modal-info-row"><span>Último envio do agente</span><strong id="modalLastAgentField">--</strong></div>
         <div class="modal-info-row"><span>Agente</span><strong id="modalAgentField">--</strong></div>
         <div class="modal-info-row"><span>Impressoras</span><strong id="modalPrintersField">--</strong></div>
+      </section>
+
+      <section class="identity-recovery" id="identityRecovery" hidden>
+        <h4>{{ icon('shield') }} Possível reinstalação</h4>
+        <p>Há um cadastro sem comunicação recente com referência de hardware compatível, ou com a mesma série e um MAC em comum. Confira o equipamento antes de recuperar o cadastro anterior. O setor, a sala e o responsável anteriores serão preservados.</p>
+        <label for="identityRecoveryTarget">Cadastro anterior</label>
+        <select id="identityRecoveryTarget"><option value="">Selecione o cadastro anterior</option></select>
+        <button type="button" class="tool-btn" id="btnReconcileIdentity">Recuperar cadastro anterior</button>
+      </section>
+
+      <section class="device-history-section" aria-label="Histórico do equipamento">
+        <button type="button" class="tool-btn" id="btnDeviceHistory">{{ icon('history') }} Consultar histórico deste equipamento</button>
+        <div id="deviceIdentityHistory" aria-live="polite"></div>
       </section>
 
       <form id="organizationForm" class="organization-form">

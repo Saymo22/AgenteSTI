@@ -9,6 +9,7 @@ Não altera o banco de dados.
 
 import csv
 import io
+import uuid
 from datetime import datetime, timedelta
 
 from flask import (
@@ -334,6 +335,10 @@ td {
                 </div>
 
                 <div class="field">
+                    <label for="device_id">ID permanente do equipamento</label>
+                    <input type="text" id="device_id" name="device_id" value="{{ filters.device_id }}" placeholder="UUID do equipamento">
+                </div>
+                <div class="field">
                     <label for="category">
                         Categoria
                     </label>
@@ -521,6 +526,7 @@ def parse_filters():
         "start": request.args.get("start", "").strip(),
         "end": request.args.get("end", "").strip(),
         "ip": request.args.get("ip", "").strip(),
+        "device_id": request.args.get("device_id", "").strip(),
         "category": request.args.get(
             "category", ""
         ).strip(),
@@ -556,6 +562,8 @@ def parse_filters():
         raise ValueError(
             "Filtro de IP muito longo."
         )
+    if filters['device_id']:
+        filters['device_id'] = str(uuid.UUID(filters['device_id']))
 
     return filters
 
@@ -564,6 +572,10 @@ def build_where(filters):
 
     conditions = []
     params = []
+
+    if filters.get('device_id'):
+        conditions.append('device_id = ?')
+        params.append(filters['device_id'])
 
     if filters["start"]:
         conditions.append(
