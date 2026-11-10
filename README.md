@@ -226,6 +226,12 @@ Ping e DNS não informam o usuário conectado nem o sistema operacional. Para es
 
 Latência sem medição recente aparece como **Não medida**, em vez de `0 ms`. O valor zero continua válido quando retornado pelo ping. Após reiniciar o servidor, o horário histórico do agente é preservado, mas uma nova comunicação é necessária para habilitar ações remotas.
 
+## Som personalizado dos alertas
+
+Clique no ícone de som da barra superior para configurar o áudio. Use **Escolher arquivo de áudio** para selecionar MP3, WAV, OGG ou M4A (até 10 MB), ajuste o volume e clique em **Testar som**. Depois, clique em **Ativar alertas sonoros**. Cada alerta de queda reproduz até os primeiros 10 segundos; ocorrências simultâneas geram uma única reprodução por atualização, sem sobrepor arquivos.
+
+O áudio é validado pelo navegador antes de substituir o anterior. O arquivo fica no IndexedDB e o volume no armazenamento local desse navegador; não são enviados ao servidor nem compartilhados com outras máquinas. Ao recarregar o painel, o arquivo e o volume são restaurados, mas é necessário ativar novamente o som, respeitando as regras de reprodução do navegador. **Usar som padrão** remove o arquivo salvo e retorna ao sinal original do STI. Se o navegador impedir o armazenamento, o painel informa que a configuração vale apenas para a sessão atual.
+
 ## Identidade permanente, MACs e reinstalações
 
 O agente V3.3 gera um **UUID da instalação** e o persiste em `%ProgramData%\STI\identity.db`. Reiniciar ou substituir o executável não altera esse UUID. `STI_IDENTITY_FILE` permite escolher outro caminho persistente. Se o arquivo compartilhado já existir e puder ser lido, o agente reutiliza o UUID mesmo com acesso somente leitura. Se não puder criar o arquivo compartilhado, tenta `%LOCALAPPDATA%\STI\identity.db` e registra o fallback no log; nesse caso, mantenha a mesma conta para executá-lo. Um arquivo corrompido não é substituído silenciosamente. Faça a instalação com acesso ao mesmo arquivo de identidade durante as atualizações.

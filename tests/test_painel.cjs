@@ -8,16 +8,124 @@ function loadPanel() {
   const nodes = new Map();
   const context = vm.createContext({
     console, setTimeout, clearTimeout,
-    document: {body:{classList:{add(){},remove(){}}},querySelectorAll:()=>[], getElementById: id => {
-      if (!nodes.has(id)) nodes.set(id, {innerHTML: '', textContent: '', value: '', style: {}, focus(){},setAttribute(){},removeAttribute(){},classList: { contains: () => false, add() {}, remove() {}, toggle() {} }});
+    document: {body:{classList:{add(){},remove(){}}},querySelectorAll:()=>[],createElement:()=>({append(){}}), getElementById: id => {
+      if (!nodes.has(id)) nodes.set(id, {innerHTML: '', textContent: '', value: '', style: {}, focus(){},setAttribute(){},removeAttribute(){},replaceChildren(){},appendChild(){},classList: { contains: () => false, add() {}, remove() {}, toggle() {} }});
       return nodes.get(id);
     } },
     sessionStorage: {getItem: () => null, setItem: () => {}},
   });
   const source = fs.readFileSync(path.join(__dirname, '../sti/servidor/static/painel.js'), 'utf8');
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../sti/servidor/static/som.js'), 'utf8'), context);
   vm.runInContext(source.replace(/\s+init\(\);\s*$/, ''), context);
   return {run: code => vm.runInContext(code, context), nodes};
 }
+
+test('máquinas já offline não criam notificações nem contador vazio', () => {
+  const {run,nodes}=loadPanel();
+  run(`document.getElementById('notificationPanel').hidden=true;addEventLog=()=>{};
+       processStatusChanges([{ip:'10.2.116.1',online:false},{ip:'10.2.117.2',online:false}]);`);
+  assert.equal(run('state.notifications.length'),0);
+  assert.equal(nodes.get('notificationBadge').hidden,true);
+  assert.equal(nodes.get('notificationBadge').textContent,'0');
+  assert.equal(nodes.get('notificationSummary').textContent,'Nenhuma notificação');
+});
+
+test('sino conta quedas e recuperações não lidas e abrir marca como lidas', () => {
+  const {run,nodes}=loadPanel();
+  run(`document.getElementById('notificationPanel').hidden=true;addEventLog=()=>{};
+       processStatusChanges([{device_id:'pc',ip:'10.2.116.1',online:true}]);
+       processStatusChanges([{device_id:'pc',ip:'10.2.116.1',online:false}]);
+       processStatusChanges([{device_id:'pc',ip:'10.2.117.1',online:true}]);`);
+  assert.equal(nodes.get('notificationBadge').textContent,'2');
+  assert.equal(nodes.get('notificationBadge').hidden,false);
+  run('toggleNotifications()');
+  assert.equal(nodes.get('notificationBadge').hidden,true);
+  assert.equal(run('state.notifications.length'),2);
+  assert.equal(nodes.get('notificationSummary').textContent,'2 notificações • 0 não lidas');
+  run(`processStatusChanges([{device_id:'pc',ip:'10.2.117.1',online:false}]);`);
+  assert.equal(nodes.get('notificationBadge').hidden,true); // Alerta já visível na central aberta.
+  run(`toggleNotifications();processStatusChanges([{device_id:'pc',ip:'10.2.117.1',online:true}]);`);
+  assert.equal(nodes.get('notificationBadge').textContent,'1');
+});
+
+test('limpar zera lista e contador e atualização sem mudança não recria alertas', () => {
+  const {run,nodes}=loadPanel();
+  run(`document.getElementById('notificationPanel').hidden=true;addEventLog=()=>{};showToast=()=>{};
+       processStatusChanges([{ip:'10.2.116.1',online:true}]);
+       processStatusChanges([{ip:'10.2.116.1',online:false}]);clearNotifications();
+       processStatusChanges([{ip:'10.2.116.1',online:false}]);`);
+  assert.equal(run('state.notifications.length'),0);
+  assert.equal(nodes.get('notificationBadge').hidden,true);
+  assert.equal(nodes.get('notificationSummary').textContent,'Nenhuma notificação');
+  run(`processStatusChanges([{ip:'10.2.116.1',online:true}]);`);
+  assert.equal(nodes.get('notificationBadge').textContent,'1');
+});
+
+function mockAudio(run) {
+  run(`globalThis.played=[];globalThis.stopped=0;
+       globalThis.window={AudioContext:function(){}};
+       const parameter=()=>({setValueAtTime(){},linearRampToValueAtTime(){},exponentialRampToValueAtTime(){}});
+       state.audioCtx={state:'running',currentTime:0,destination:{},decodeAudioData:async()=>({duration:25}),
+         createGain:()=>({gain:parameter(),connect(){},disconnect(){}}),
+         createBufferSource:()=>({connect(){},disconnect(){},start(...args){played.push(args)},stop(){stopped++}})};
+       showToast=()=>{};`);
+}
+
+test('seleção de MP3 decodifica antes de salvar e rejeita arquivos inválidos', async () => {
+  const {run,nodes}=loadPanel();mockAudio(run);
+  run(`globalThis.savedFiles=[];soundStore=async(operation,file)=>{savedFiles.push(file.name)};
+       globalThis.file={name:'meu-alerta.mp3',size:2048,arrayBuffer:async()=>new ArrayBuffer(8)};`);
+  await run(`chooseAlertSound({target:{files:[file],value:'file'}})`);
+  assert.equal(run('state.soundName'),'meu-alerta.mp3');
+  assert.equal(run('savedFiles.length'),1);
+  await run(`chooseAlertSound({target:{files:[{...file,name:'arquivo.exe'}],value:'file'}})`);
+  assert.equal(run('state.soundName'),'meu-alerta.mp3');
+  assert.equal(run('savedFiles.length'),1);
+  await run(`chooseAlertSound({target:{files:[{...file,size:11*1024*1024}],value:'file'}})`);
+  assert.ok(nodes.get('alertSoundStatus').textContent.includes('10 MB'));
+  run(`state.audioCtx.decodeAudioData=async()=>{throw new Error('Corrompido')};`);
+  await run(`chooseAlertSound({target:{files:[file],value:'file'}})`);
+  assert.equal(run('state.soundName'),'meu-alerta.mp3');
+  assert.equal(run('savedFiles.length'),1);
+});
+
+test('restaura áudio e volume locais mantendo ativação explícita após recarregar', async () => {
+  const {run,nodes}=loadPanel();mockAudio(run);
+  run(`localStorage={getItem:()=> '35'};soundStore=async()=>({name:'salvo.mp3',size:2000,arrayBuffer:async()=>new ArrayBuffer(8)});`);
+  await run('initSoundSettings()');
+  assert.equal(run('state.soundName'),'salvo.mp3');
+  assert.equal(run('state.soundVolume'),35);
+  assert.equal(run('state.soundEnabled'),false);
+  assert.equal(nodes.get('btnToggleAlertSound').textContent,'Ativar alertas sonoros');
+  assert.equal(run('played.length'),0);
+});
+
+test('som personalizado respeita ativação, teste, limite de duração e desligamento', async () => {
+  const {run}=loadPanel();mockAudio(run);
+  run(`state.soundBuffer={duration:25};playAlert();`);
+  assert.equal(run('played.length'),0);
+  await run('testAlertSound()');
+  assert.equal(run('played[0][2]'),10);
+  assert.equal(run('state.soundEnabled'),false);
+  run('stopAlertSound()');
+  await run('toggleSound()');
+  assert.equal(run('state.soundEnabled'),true);
+  assert.equal(run('state.soundSources.length'),1);
+  await run('toggleSound()');
+  assert.equal(run('state.soundEnabled'),false);
+  assert.equal(run('state.soundSources.length'),0);
+});
+
+test('falha no armazenamento mantém áudio na sessão e permite usar o som padrão', async () => {
+  const {run,nodes}=loadPanel();mockAudio(run);
+  run(`soundStore=async()=>{throw new Error('Sem espaço')};globalThis.file={name:'alerta.mp3',size:1000,arrayBuffer:async()=>new ArrayBuffer(8)};`);
+  await run(`chooseAlertSound({target:{files:[file],value:'file'}})`);
+  assert.equal(run('state.soundName'),'alerta.mp3');
+  assert.ok(nodes.get('alertSoundStatus').textContent.includes('sessão'));
+  await run('resetAlertSound()');
+  assert.equal(run('state.soundBuffer'),null);
+  assert.equal(run('state.soundName'),'');
+});
 
 test('cartões distinguem ping, agente, nomes provisórios e latência ausente', () => {
   const {run} = loadPanel();

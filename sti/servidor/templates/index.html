@@ -155,7 +155,7 @@
 
         <div class="sti-notification-footer">
             <span id="notificationSummary">
-                0 dispositivos offline
+                Nenhuma notificação
             </span>
         </div>
 
@@ -164,7 +164,7 @@
 </div>
 
 
-            <button class="toolbar-icon-btn" id="btnSound" title="Ativar alerta sonoro (reproduz um som de teste)" aria-pressed="false">
+            <button class="toolbar-icon-btn" id="btnSound" title="Configurar som dos alertas" aria-label="Configurar som dos alertas" aria-controls="soundSettingsPanel" aria-expanded="false" aria-pressed="false">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z"></path><path d="M15.5 8.5a5 5 0 0 1 0 7"></path><path d="M18.5 5.5a9 9 0 0 1 0 13"></path></svg>
             </button>
             <button class="toolbar-icon-btn" id="btnTv" title="Modo TV">
@@ -484,8 +484,28 @@
     </div>
   </div>
 
+  <section class="sound-settings-panel" id="soundSettingsPanel" role="dialog" aria-labelledby="soundSettingsTitle" tabindex="-1" hidden>
+    <div class="sound-settings-head">
+      <div><span class="sound-settings-eyebrow">PERSONALIZAÇÃO</span><h3 id="soundSettingsTitle">{{ icon('sound') }} Som dos alertas</h3></div>
+      <button type="button" class="copy-ip-btn" id="closeSoundSettings" aria-label="Fechar configurações de som">{{ icon('close') }}</button>
+    </div>
+    <div class="sound-current-file">{{ icon('sound') }}<div><span>Áudio selecionado</span><strong id="alertSoundName">Som padrão do STI</strong></div></div>
+    <button type="button" class="tool-btn sound-file-picker" id="btnChooseAlertSound">{{ icon('download') }} Escolher arquivo de áudio</button>
+    <input id="alertSoundFile" type="file" accept=".mp3,.wav,.ogg,.m4a,audio/mpeg,audio/wav,audio/ogg,audio/mp4" aria-label="Escolher arquivo de áudio para alertas" hidden>
+    <p class="sound-format-hint">MP3, WAV, OGG ou M4A • até 10 MB.<br>Cada alerta reproduz até 10 segundos do arquivo.</p>
+    <label class="sound-volume-label" for="alertSoundVolume">Volume <output id="alertSoundVolumeValue" for="alertSoundVolume">70%</output></label>
+    <input id="alertSoundVolume" class="sound-volume-slider" type="range" min="0" max="100" step="1" value="70">
+    <div class="sound-settings-actions">
+      <button type="button" class="tool-btn" id="btnTestAlertSound">Testar som</button>
+      <button type="button" class="tool-btn" id="btnResetAlertSound">Usar som padrão</button>
+    </div>
+    <button type="button" class="tool-btn primary sound-enable-btn" id="btnToggleAlertSound" aria-pressed="false">Ativar alertas sonoros</button>
+    <p id="alertSoundStatus" class="sound-settings-status" role="status">O arquivo e o volume ficam salvos somente neste navegador. Ative os alertas ao abrir o painel.</p>
+  </section>
+
   <div class="toast" id="toast">Ação executada.</div>
 
+  <script src="/static/som.js"></script>
   <script src="/static/painel.js"></script>
 </body>
 </html>
