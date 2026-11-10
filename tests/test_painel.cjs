@@ -8,8 +8,8 @@ function loadPanel() {
   const nodes = new Map();
   const context = vm.createContext({
     console, setTimeout, clearTimeout,
-    document: { getElementById: id => {
-      if (!nodes.has(id)) nodes.set(id, {innerHTML: '', textContent: '', value: '', style: {}, classList: { contains: () => false, add() {}, remove() {} }});
+    document: {body:{classList:{add(){},remove(){}}},querySelectorAll:()=>[], getElementById: id => {
+      if (!nodes.has(id)) nodes.set(id, {innerHTML: '', textContent: '', value: '', style: {}, focus(){},setAttribute(){},removeAttribute(){},classList: { contains: () => false, add() {}, remove() {}, toggle() {} }});
       return nodes.get(id);
     } },
     sessionStorage: {getItem: () => null, setItem: () => {}},
@@ -136,4 +136,41 @@ test('opções de filtro escapam aspas e preservam a seleção atual', () => {
        state.organizationFilters.room='value:204'; updateOrganizationFilters();`);
   assert.ok(nodes.get('filterDepartment').innerHTML.includes('value:TI&quot; autofocus onfocus=&quot;teste'));
   assert.equal(nodes.get('filterRoom').value, 'value:204');
+});
+
+test('ícones locais usam uma lista permitida e não interpolam nomes arbitrários', () => {
+  const {run}=loadPanel();
+  assert.ok(run("uiIcon('cpu')").includes('/static/icons/sti.svg#cpu'));
+  const icon=run(`uiIcon('" onload="alert(1)')`);
+  assert.ok(icon.includes('/static/icons/sti.svg#monitor'));
+  assert.ok(!icon.includes('onload'));
+});
+
+test('filtros de disponibilidade combinam com as faixas originais', () => {
+  const {run}=loadPanel();
+  run(`state.devices=[{ip:'10.2.116.1',online:true,latency:5},{ip:'10.2.116.2',online:false},{ip:'10.2.117.1',online:true,latency:150}];state.statusFilter='offline';`);
+  assert.equal(run('getFilteredDevices()[0].ip'),'10.2.116.2');
+  run(`state.statusFilter='attention';`);
+  assert.equal(run('getFilteredDevices()[0].ip'),'10.2.117.1');
+  run(`state.currentView='116';`);
+  assert.equal(run('getFilteredDevices().length'),0);
+});
+
+test('contadores terminam no valor real e respeitam movimento reduzido', () => {
+  const {run,nodes}=loadPanel();
+  run(`globalThis.frames=[];globalThis.performance={now:()=>0};globalThis.requestAnimationFrame=callback=>{frames.push(callback);return frames.length;};animateMetric('metricTotal',42);frames.shift()(650);`);
+  assert.equal(nodes.get('metricTotal').textContent,'42');
+  run(`globalThis.window={matchMedia:()=>({matches:true})};globalThis.requestAnimationFrame=()=>{throw new Error('Não deve animar')};animateMetric('metricTotal',12);`);
+  assert.equal(nodes.get('metricTotal').textContent,'12');
+});
+
+test('indicador de escaneamento usa o estado real e restaura o botão', () => {
+  const {run,nodes}=loadPanel();
+  run(`document.getElementById('btnScan').innerHTML='Escanear rede';updateScanState({scanning:true,progress:20,total:100});`);
+  assert.equal(nodes.get('btnScan').disabled,true);
+  assert.ok(nodes.get('btnScan').innerHTML.includes('Escaneando'));
+  assert.ok(nodes.get('btnScan').title.includes('20 de 100'));
+  run('updateScanState({scanning:false});');
+  assert.equal(nodes.get('btnScan').disabled,false);
+  assert.equal(nodes.get('btnScan').innerHTML,'Escanear rede');
 });

@@ -2,6 +2,9 @@ const state = {
       devices: [],
       currentView: 'overview',
       search: '',
+      statusFilter: 'all',
+      connected: false,
+      lastFocus: null,
       organizationFilters: { department: '', room: '', responsible: '' },
       groupBy: '',
       organizationEditor: { ip: null, dirty: false, saving: false, revision: '' },
@@ -116,6 +119,28 @@ function init() {
         renderAll();
       });
       document.getElementById('btnExport').addEventListener('click', exportCSV);
+      document.getElementById('btnMobileNav').addEventListener('click', () => toggleMobileNav(!document.getElementById('adminSidebar').classList.contains('is-open')));
+      document.getElementById('navBackdrop').addEventListener('click', () => toggleMobileNav(false));
+      document.querySelectorAll('[data-status]').forEach(button => {
+        button.addEventListener('click', () => setStatusFilter(button.dataset.status));
+        if (button.tagName !== 'BUTTON') button.addEventListener('keydown', event => {
+          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setStatusFilter(button.dataset.status); }
+        });
+      });
+      document.addEventListener('keydown', handlePremiumKeys);
+      installCardSpotlight();
+      document.addEventListener('pointerdown', event => {
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+        const button = event.target.closest('.tool-btn,.nav-item,.legend-pill,.copy-ip-btn');
+        if (!button || button.disabled) return;
+        const bounds = button.getBoundingClientRect(), size = Math.max(bounds.width, bounds.height) * 2;
+        const ripple = document.createElement('span');
+        ripple.className = 'sti-ripple';
+        ripple.setAttribute('aria-hidden', 'true');
+        Object.assign(ripple.style, {width:`${size}px`,height:`${size}px`,left:`${event.clientX-bounds.left-size/2}px`,top:`${event.clientY-bounds.top-size/2}px`});
+        button.appendChild(ripple);
+        setTimeout(() => ripple.remove(), 600);
+      });
       document.getElementById('btnScan').addEventListener('click', scanNetwork);
       document.getElementById('btnSound').addEventListener('click', toggleSound);
       document.getElementById('btnTv').addEventListener('click', toggleKiosk);
@@ -142,6 +167,8 @@ function init() {
       });
       document.getElementById('clearOrganizationFilters').addEventListener('click', () => {
         state.search = '';
+        state.statusFilter = 'all';
+        syncStatusFilters();
         el.searchInput.value = '';
         state.organizationFilters = { department: '', room: '', responsible: '' };
         state.groupBy = '';
@@ -167,7 +194,12 @@ function init() {
 
     function switchView(view) {
       state.currentView = view;
-      el.navItems().forEach(btn => btn.classList.toggle('active', btn.dataset.view === view));
+      el.navItems().forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.view === view);
+        if (btn.dataset.view === view) btn.setAttribute('aria-current', 'page');
+        else btn.removeAttribute('aria-current');
+      });
+      toggleMobileNav(false);
       el.views().forEach(section => section.classList.remove('active'));
       const actualView = ['116','117','118','119'].includes(view) ? 'overview' : view;
       document.getElementById(`view-${actualView}`).classList.add('active');
@@ -195,6 +227,8 @@ function init() {
         const response = await checkedFetch('/api/devices');
         const data = await response.json();
         const devices = Array.isArray(data.devices) ? data.devices : [];
+        updateSyncStatus(true);
+        updateScanState(data.scan || {});
         processStatusChanges(devices);
         state.devices = devices;
         updateOrganizationFilters();
@@ -210,6 +244,7 @@ function init() {
         }
       } catch (err) {
         console.error(err);
+        updateSyncStatus(false);
         addEventLog('error', 'Falha ao carregar dispositivos', 'Não foi possível consultar /api/devices.', new Date());
         renderAll();
       }
@@ -406,18 +441,18 @@ function renderLogs() {
             ? 'Data indisponível'
             : date.toLocaleString('pt-BR');
 
-        let icon = 'ℹ️';
+        let icon = uiIcon('report');
 
         if (log.type === 'error') {
-            icon = '🚨';
+            icon = uiIcon('alert');
         }
 
         if (log.type === 'success') {
-            icon = '✅';
+            icon = uiIcon('check');
         }
 
         if (log.type === 'warning') {
-            icon = '⚠️';
+            icon = uiIcon('alert');
         }
 
         const origem = log.persisted
@@ -466,10 +501,10 @@ function renderLogs() {
       const highLatency = state.devices.filter(d => d.online && Number(d.latency || 0) > 100).length;
       const avgLatency = calcAvgLatency(state.devices);
 
-      document.getElementById('metricTotal').textContent = summary.total || 0;
-      document.getElementById('metricOnline').textContent = summary.online || 0;
-      document.getElementById('metricOffline').textContent = summary.offline || 0;
-      document.getElementById('metricLatency').textContent = `${avgLatency} ms`;
+      animateMetric('metricTotal', summary.total || 0);
+      animateMetric('metricOnline', summary.online || 0);
+      animateMetric('metricOffline', summary.offline || 0);
+      animateMetric('metricLatency', avgLatency, ' ms');
       document.getElementById('sideOnline').textContent = summary.online || 0;
       document.getElementById('sideOffline').textContent = summary.offline || 0;
       document.getElementById('sideHighLatency').textContent = highLatency;
@@ -514,7 +549,7 @@ function renderLogs() {
     }
 
     function getFilteredDevices() {
-      let devices = [...state.devices];
+      let devices = state.devices.filter(device => matchesStatus(device, state.statusFilter));
       if (['116','117','118','119'].includes(state.currentView)) {
         devices = devices.filter(d => String(d.ip || '').startsWith(`10.2.${state.currentView}.`));
       }
@@ -558,6 +593,9 @@ function renderLogs() {
       ).join('');
       document.querySelectorAll('.device-card').forEach(card => {
         card.addEventListener('click', () => openModal(card.dataset.ip));
+        card.addEventListener('keydown', event => {
+          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openModal(card.dataset.ip); }
+        });
       });
     }
 
@@ -567,7 +605,7 @@ function renderLogs() {
       const latencyVal = device.online ? `${Number(device.latency || 0)} ms` : 'Offline';
       const latencyClass = !device.online ? 'offline' : Number(device.latency || 0) > 100 ? 'warn' : 'good';
       return `
-        <article class="device-card ${status.cls}" data-ip="${escapeHtml(device.ip)}">
+        <article class="device-card ${status.cls}" data-ip="${escapeHtml(device.ip)}" tabindex="0" role="button" aria-label="Gerenciar ${escapeHtml(device.name || device.ip)}">
           <div class="device-head">
             <div style="display:flex;gap:14px;min-width:0;">
               <div class="device-os ${os.cls}">${os.icon}</div>
@@ -600,7 +638,7 @@ function renderLogs() {
             ${ORGANIZATION_FIELDS.map(field => `<div><dt>${ORGANIZATION_LABELS[field]}</dt><dd>${escapeHtml(device.organization?.[field] || 'Não informado')}</dd></div>`).join('')}
           </dl>
           <div class="device-footer">
-            <span style="color:var(--muted);font-weight:700;">Clique para abrir o pop-up</span>
+            <span style="color:var(--muted);font-weight:700;">Gerenciar equipamento ${uiIcon('arrow')}</span>
             <span class="latency-pill ${latencyClass}">${latencyVal}</span>
           </div>
         </article>
@@ -619,7 +657,7 @@ function renderLogs() {
         const online = devices.filter(d => d.online).length;
         const total = devices.length;
         const label = segment === '119' ? 'Rede Servidor 119' : `Faixa ${segment}`;
-        const icon = segment === '119' ? '🖥️' : '🌐';
+        const icon = uiIcon(segment === '119' ? 'monitor' : 'globe');
         const pct = total ? Math.round((online/total)*100) : 0;
         return `
           <article class="segment-card">
@@ -737,7 +775,12 @@ function renderLogs() {
         button.disabled = !device.agent_online || !(device.capabilities || []).includes(command);
         button.title = !device.agent_online ? 'Agente sem comunicação recente' : button.disabled ? 'Ação não habilitada neste agente' : '';
       }
+      if (!refresh) state.lastFocus = document.activeElement;
       el.deviceModalOverlay.classList.add('active');
+      document.body.classList.add('modal-open');
+      document.getElementById('adminContent').inert = true;
+      document.getElementById('adminSidebar').inert = true;
+      if (!refresh) document.getElementById('machineDialog').focus();
     }
 
     function setUsage(valueId, barId, pct, text) {
@@ -777,6 +820,11 @@ function renderLogs() {
       if (state.organizationEditor.dirty && !confirm('Descartar as alterações não salvas do cadastro?')) return;
       state.organizationEditor.dirty = false;
       el.deviceModalOverlay.classList.remove('active');
+      document.body.classList.remove('modal-open');
+      document.getElementById('adminContent').inert = false;
+      document.getElementById('adminSidebar').inert = false;
+      if (state.lastFocus?.isConnected) state.lastFocus.focus();
+      else document.getElementById('adminContent').focus();
     }
 
     async function sendCommand(command) {
@@ -871,24 +919,15 @@ function renderLogs() {
     }
 
     async function scanNetwork() {
-      const btn = document.getElementById('btnScan');
-      btn.disabled = true;
-      const original = btn.innerHTML;
-      btn.innerHTML = `<span>⏳ Escaneando...</span>`;
+      const button = document.getElementById('btnScan');
+      button.disabled = true;
       try {
-        const response = await checkedFetch('/api/scan', { method: 'POST' });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        showToast('Escaneamento iniciado.');
-        addEventLog('success', 'Escaneamento executado', 'A rotina de scan da rede foi acionada.', new Date());
-        setTimeout(() => loadDevices(), 1000);
-      } catch (err) {
-        console.error(err);
-        showToast(err.message);
-      } finally {
-        setTimeout(() => {
-          btn.disabled = false;
-          btn.innerHTML = original;
-        }, 1000);
+        await checkedFetch('/api/scan', {method:'POST'});
+        showToast('Varredura solicitada. Acompanhe o botão de escaneamento.');
+        await loadDevices();
+      } catch (error) {
+        button.disabled = false;
+        showToast(error.message);
       }
     }
 
@@ -1396,6 +1435,107 @@ function initNotifications() {
         editor.saving = false;
         document.getElementById('organizationFieldset').disabled = false;
       }
+    }
+
+    const PREMIUM_ICONS = new Set(["grid", "monitor", "network", "history", "report", "search", "scan", "download", "bell", "menu", "close", "arrow", "logout", "sun", "list", "sound", "check", "clock", "pulse", "shield", "copy", "message", "power", "refresh", "pin", "cpu", "memory", "disk", "printer", "user", "filter", "globe", "alert"]);
+    function uiIcon(name) {
+      const safe = PREMIUM_ICONS.has(name) ? name : 'monitor';
+      return `<svg class="sti-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="/static/icons/sti.svg#${safe}"></use></svg>`;
+    }
+    const metricAnimations = new Map();
+    function animateMetric(id, target, suffix = '') {
+      const element = document.getElementById(id);
+      const start = Number.parseFloat(element.textContent) || 0;
+      const previous = metricAnimations.get(id);
+      if (previous && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(previous);
+      const reduced = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      if (reduced || typeof requestAnimationFrame !== 'function' || start === target) {
+        element.textContent = `${target}${suffix}`;
+        metricAnimations.delete(id);
+        return;
+      }
+      const started = performance.now();
+      const frame = now => {
+        const progress = Math.min((now - started) / 650, 1);
+        element.textContent = `${Math.round(start + (target - start) * (1 - (1 - progress) ** 3))}${suffix}`;
+        if (progress < 1) metricAnimations.set(id, requestAnimationFrame(frame));
+        else metricAnimations.delete(id);
+      };
+      metricAnimations.set(id, requestAnimationFrame(frame));
+    }
+    function matchesStatus(device, status) {
+      if (status === 'online') return device.online === true;
+      if (status === 'offline') return device.online === false;
+      if (status === 'attention') return device.online === true && Number(device.latency || 0) > 100;
+      return true;
+    }
+    function syncStatusFilters() {
+      document.querySelectorAll('[data-status]').forEach(button => {
+        const active = button.dataset.status === state.statusFilter;
+        button.setAttribute('aria-pressed', String(active));
+        button.classList.toggle('selected', active);
+        if (button.classList.contains('legend-pill')) button.classList.toggle('active', active);
+      });
+    }
+    function setStatusFilter(status) {
+      state.statusFilter = ['all','online','offline','attention'].includes(status) ? status : 'all';
+      syncStatusFilters();
+      renderDevices();
+    }
+    function toggleMobileNav(open) {
+      document.getElementById('adminSidebar').classList.toggle('is-open', open);
+      document.getElementById('navBackdrop').hidden = !open;
+      document.getElementById('btnMobileNav').setAttribute('aria-expanded', String(open));
+    }
+    function updateSyncStatus(connected) {
+      state.connected = connected;
+      const badge = document.getElementById('syncStatus');
+      badge.classList.toggle('disconnected', !connected);
+      badge.textContent = connected ? 'Atualizado às ' + new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'}) : 'Sem atualização';
+    }
+    function installCardSpotlight() {
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !window.matchMedia('(pointer: fine)').matches) return;
+      let scheduled = false, lastEvent;
+      el.devicesGrid.addEventListener('pointermove', event => {
+        lastEvent = event;
+        if (scheduled) return;
+        scheduled = true;
+        requestAnimationFrame(() => {
+          scheduled = false;
+          const card = lastEvent.target.closest('.device-card');
+          if (!card || !card.isConnected) return;
+          const bounds = card.getBoundingClientRect();
+          card.style.setProperty('--spot-x', `${lastEvent.clientX - bounds.left}px`);
+          card.style.setProperty('--spot-y', `${lastEvent.clientY - bounds.top}px`);
+        });
+      });
+    }
+    function handlePremiumKeys(event) {
+      if (el.deviceModalOverlay.classList.contains('active')) {
+        if (event.key === 'Escape') { event.preventDefault(); closeModal(); }
+        if (event.key === 'Tab') {
+          const elements = [...document.getElementById('machineDialog').querySelectorAll('button:not(:disabled),input:not(:disabled)')].filter(item => item.offsetParent !== null);
+          const first = elements[0], last = elements[elements.length-1];
+          if (event.shiftKey && (document.activeElement === first || document.activeElement.id === 'machineDialog')) { event.preventDefault(); last?.focus(); }
+          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+        }
+        return;
+      }
+      if (event.key === 'Escape') toggleMobileNav(false);
+      if (event.key === '/' && !event.ctrlKey && !event.metaKey && !['INPUT','TEXTAREA','SELECT'].includes(event.target.tagName) && !event.target.isContentEditable) {
+        event.preventDefault();
+        el.searchInput.focus();
+      }
+    }
+
+    function updateScanState(scan) {
+      const button = document.getElementById('btnScan');
+      if (!state.scanMarkup) state.scanMarkup = button.innerHTML;
+      const scanning = scan.scanning === true;
+      button.disabled = scanning;
+      button.classList.toggle('is-scanning', scanning);
+      button.innerHTML = scanning ? `${uiIcon('scan')}<span>Escaneando…</span>` : state.scanMarkup;
+      button.title = scanning ? `Verificando ${Number(scan.progress) || 0} de ${Number(scan.total) || 0} endereços` : 'Escanear rede';
     }
 
     init();

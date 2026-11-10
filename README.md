@@ -187,6 +187,18 @@ No Windows:
 
 Saída: `dist\STI_Agente_V3_2.exe`. A configuração atual gera o executável sem console (`console=False`); a execução pelo PyCharm mantém seu terminal. Para diagnóstico com saída visível, use o fonte ou gere um build com console. Os `.spec` antigos ficam em `packaging/legacy/` como alternativas de nome; use V3.2 para a distribuição atual. O JSON com credenciais não é embutido no build.
 
+## Acabamento visual do painel
+
+O painel mantém a composição original: identificação STI e relógio à esquerda, indicadores no topo, cartões de máquinas no centro e saúde da rede à direita.
+
+- Os ícones são SVG locais, compartilhados em `sti/servidor/static/icons/sti.svg`, sem depender de emojis ou serviços externos de ícones.
+- Os cartões recebem iluminação sutil acompanhando o cursor, e os botões têm transições de interação. Os contadores animados terminam nos valores reais recebidos do servidor.
+- Os indicadores e as legendas permitem filtrar online, offline e latência elevada, combinando com a busca, a organização e a faixa de IP.
+- O menu lateral é aberto pelo botão de navegação nas telas pequenas. `/` leva à busca e `Esc` fecha os detalhes, com confirmação quando há cadastro não salvo.
+- As animações respeitam a preferência de movimento reduzido do sistema/navegador. A atualização automática dos dados não repete a animação de entrada dos cartões.
+
+O layout estrutural continua em `sti/servidor/static/painel.css`; os efeitos e refinamentos ficam em `sti/servidor/static/premium-effects.css`.
+
 ## Organização por setor, sala e responsável
 
 1. Abra o cartão da máquina no painel.

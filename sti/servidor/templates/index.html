@@ -1,3 +1,4 @@
+{% from 'components/icons.html' import icon %}
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -9,14 +10,15 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
   <script src="/static/vendor/chart.umd.min.js"></script>
   <link rel="stylesheet" href="/static/painel.css">
+  <link rel="stylesheet" href="/static/premium-effects.css">
 </head>
 <body>
   <div class="layout">
-    <aside class="sidebar">
+    <aside class="sidebar" id="adminSidebar" aria-label="Navegação principal">
       <div class="sidebar-shell">
       <div class="brand">
         <div class="logo-badge">
-          <img src="/static/logo.png" alt="Logo STI" onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
+          <img src="/static/logo.png" alt="Logo STI">
           <svg class="logo-fallback" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
             <rect x="3" y="4" width="18" height="12" rx="2"></rect>
             <path d="M8 20h8"></path>
@@ -39,42 +41,44 @@
 
       <div class="side-section-title">Navegação</div>
       <nav class="nav-menu float-card" id="navMenu">
-        <button class="nav-item active" data-view="overview"><span class="nav-icon">📊</span><span>Visão Geral</span></button>
-        <button class="nav-item" data-view="116"><span class="nav-icon">🌐</span><span>Faixa de IP 116</span></button>
-        <button class="nav-item" data-view="117"><span class="nav-icon">🌐</span><span>Faixa de IP 117</span></button>
-        <button class="nav-item" data-view="118"><span class="nav-icon">🌐</span><span>Faixa de IP 118</span></button>
-        <button class="nav-item" data-view="119"><span class="nav-icon">🖥️</span><span>Rede Servidor 119</span></button>
-        <button class="nav-item" data-view="mapping"><span class="nav-icon">🗺️</span><span>Mapeamento</span></button>
-        <button class="nav-item" data-view="history"><span class="nav-icon">📜</span><span>Histórico de Log</span></button>
+        <button class="nav-item active" aria-current="page" data-view="overview"><span class="nav-icon">{{ icon('grid') }}</span><span>Visão Geral</span></button>
+        <button class="nav-item" data-view="116"><span class="nav-icon">{{ icon('globe') }}</span><span>Faixa de IP 116</span></button>
+        <button class="nav-item" data-view="117"><span class="nav-icon">{{ icon('globe') }}</span><span>Faixa de IP 117</span></button>
+        <button class="nav-item" data-view="118"><span class="nav-icon">{{ icon('globe') }}</span><span>Faixa de IP 118</span></button>
+        <button class="nav-item" data-view="119"><span class="nav-icon">{{ icon('monitor') }}</span><span>Rede Servidor 119</span></button>
+        <button class="nav-item" data-view="mapping"><span class="nav-icon">{{ icon('network') }}</span><span>Mapeamento</span></button>
+        <button class="nav-item" data-view="history"><span class="nav-icon">{{ icon('history') }}</span><span>Histórico de Log</span></button>
       </nav>
       </div>
 
       <div class="side-section-title">Resumo Rápido</div>
       <div class="mini-stats float-card">
         <div class="mini-stat">
-          <div class="left"><span>🟢</span><span>Online</span></div>
+          <div class="left"><span>{{ icon('check') }}</span><span>Online</span></div>
           <div class="value" id="sideOnline">0</div>
         </div>
         <div class="mini-stat">
-          <div class="left"><span>🔴</span><span>Offline</span></div>
+          <div class="left"><span>{{ icon('power') }}</span><span>Offline</span></div>
           <div class="value" id="sideOffline">0</div>
         </div>
         <div class="mini-stat">
-          <div class="left"><span>⚡</span><span>Latência Alta</span></div>
+          <div class="left"><span>{{ icon('pulse') }}</span><span>Latência Alta</span></div>
           <div class="value" id="sideHighLatency">0</div>
         </div>
       </div>
     </aside>
 
-    <main class="content">
+    <button type="button" id="navBackdrop" class="nav-backdrop" aria-label="Fechar navegação" hidden></button>
+    <main class="content" id="adminContent" tabindex="-1">
       <header>
         <div class="toolbar">
+          <button type="button" id="btnMobileNav" class="toolbar-icon-btn mobile-navigation" aria-label="Abrir navegação" aria-expanded="false" aria-controls="adminSidebar">{{ icon('menu') }}</button>
           <div class="search-wrap">
             <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
-            <input id="searchInput" type="text" placeholder="Buscar máquina, setor, sala ou responsável..." aria-label="Buscar no inventário" />
+            <input id="searchInput" type="text" placeholder="Buscar máquina, IP, setor ou responsável..." aria-label="Buscar no inventário" />
           </div>
           <div class="toolbar-actions">
-            <button class="tool-btn" id="btnExport">
+            <button class="tool-btn" id="btnExport" title="Exportar inventário CSV" aria-label="Exportar inventário CSV">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="M7 10l5 5 5-5"></path><path d="M12 15V3"></path></svg>
               <span>Exportar CSV</span>
             </button>
@@ -174,50 +178,51 @@
         <section class="view active" id="view-overview">
           <div class="section-title-row">
             <div class="section-title">
+              <div class="section-eyebrow"><span class="signal-bars"><i></i><i></i><i></i></span> CENTRAL DE MONITORAMENTO</div>
               <h2>Painel de Visão Geral</h2>
               <p>Monitoramento em tempo real da infraestrutura e do inventário da rede.</p>
             </div>
-            <div class="tab-pill">
+            <div class="section-context"><span class="sync-pill" id="syncStatus" role="status">Aguardando leitura</span><div class="tab-pill">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18"></path><path d="M3 6h18"></path><path d="M3 18h18"></path></svg>
               <span id="filterPill">Todos os dispositivos</span>
-            </div>
+            </div></div>
           </div>
 
           <div class="metrics-grid">
-            <article class="metric-card total">
+            <article class="metric-card total" role="button" tabindex="0" data-status="all" aria-pressed="true">
               <div class="metric-top">
                 <div class="metric-label">Total Mapeado</div>
-                <div class="metric-icon">🧩</div>
+                <div class="metric-icon">{{ icon('grid') }}</div>
               </div>
               <div>
                 <div class="metric-value" id="metricTotal">0</div>
                 <div class="metric-sub">Dispositivos inventariados</div>
               </div>
             </article>
-            <article class="metric-card online">
+            <article class="metric-card online" role="button" tabindex="0" data-status="online" aria-pressed="false">
               <div class="metric-top">
                 <div class="metric-label">Online</div>
-                <div class="metric-icon">🟢</div>
+                <div class="metric-icon">{{ icon('check') }}</div>
               </div>
               <div>
                 <div class="metric-value" id="metricOnline">0</div>
                 <div class="metric-sub">Dispositivos ativos</div>
               </div>
             </article>
-            <article class="metric-card offline">
+            <article class="metric-card offline" role="button" tabindex="0" data-status="offline" aria-pressed="false">
               <div class="metric-top">
                 <div class="metric-label">Offline</div>
-                <div class="metric-icon">🔴</div>
+                <div class="metric-icon">{{ icon('power') }}</div>
               </div>
               <div>
                 <div class="metric-value" id="metricOffline">0</div>
                 <div class="metric-sub">Dispositivos inativos</div>
               </div>
             </article>
-            <article class="metric-card latency">
+            <article class="metric-card latency" role="button" tabindex="0" data-status="attention" aria-pressed="false">
               <div class="metric-top">
                 <div class="metric-label">Latência</div>
-                <div class="metric-icon">⚡</div>
+                <div class="metric-icon">{{ icon('pulse') }}</div>
               </div>
               <div>
                 <div class="metric-value" id="metricLatency">0 ms</div>
@@ -233,10 +238,11 @@
                   <h3>Dispositivos</h3>
                   <p>Cards com destaque de status, sistema operacional, usuário e latência.</p>
                 </div>
-                <div class="status-legend">
-                  <span class="legend-pill"><span class="legend-dot" style="background:var(--green)"></span>On</span>
-                  <span class="legend-pill"><span class="legend-dot" style="background:var(--red)"></span>Off</span>
-                  <span class="legend-pill"><span class="legend-dot" style="background:var(--amber)"></span>Latência</span>
+                <div class="status-legend" aria-label="Filtrar por disponibilidade">
+                  <button type="button" class="legend-pill active" data-status="all" aria-pressed="true">Todos</button>
+                  <button type="button" class="legend-pill" data-status="online" aria-pressed="false"><span class="legend-dot online-dot"></span>Online</button>
+                  <button type="button" class="legend-pill" data-status="offline" aria-pressed="false"><span class="legend-dot offline-dot"></span>Offline</button>
+                  <button type="button" class="legend-pill" data-status="attention" aria-pressed="false" title="Equipamentos online com latência acima de 100 ms">{{ icon('pulse') }}Latência</button>
                 </div>
               </div>
               <div class="organization-filters" aria-label="Organização das máquinas">
@@ -304,7 +310,7 @@
               <h2>Mapeamento</h2>
               <p>Distribuição visual dos equipamentos por faixa de IP.</p>
             </div>
-            <div class="tab-pill"><span>🗺️ Topologia da Rede</span></div>
+            <div class="tab-pill"><span>{{ icon('network') }} Topologia da Rede</span></div>
           </div>
           <div class="map-wrapper">
             <div class="map-groups" id="mapGroups"></div>
@@ -326,7 +332,7 @@
               <h2>Histórico de Log</h2>
               <p>Histórico operacional, snapshots e eventos de status.</p>
             </div>
-            <div class="tab-pill"><span>📜 Log funcionando</span></div>
+            <div class="tab-pill"><span>{{ icon('history') }} Log funcionando</span></div>
           </div>
           <div class="history-layout">
             <article class="history-chart-card">
@@ -375,7 +381,7 @@
   </div>
 
   <div class="modal-overlay" id="deviceModalOverlay">
-    <div class="modal">
+    <div class="modal" id="machineDialog" role="dialog" aria-modal="true" aria-labelledby="modalName" tabindex="-1">
       <div class="modal-top">
         <div class="modal-title-wrap">
           <div class="modal-os" id="modalOs"></div>
@@ -384,7 +390,7 @@
             <div class="modal-sub" id="modalSub">IP • Sistema</div>
           </div>
         </div>
-        <button class="modal-close" id="modalClose">×</button>
+        <button class="modal-close" id="modalClose" aria-label="Fechar detalhes">{{ icon('close') }}</button>
       </div>
 
       <form id="organizationForm" class="organization-form">
@@ -418,19 +424,19 @@
           <h4>Uso de Recursos</h4>
           <div class="modal-stats">
             <div class="modal-stat">
-              <div class="modal-stat-head"><span>🧠 Processador</span><strong id="modalCpuValue">--</strong></div>
+              <div class="modal-stat-head"><span>{{ icon('cpu') }} Processador</span><strong id="modalCpuValue">--</strong></div>
               <div class="bar-track"><div class="bar-fill" id="modalCpuBar" style="width:0%;background:linear-gradient(90deg,var(--cyan),var(--blue))"></div></div>
             </div>
             <div class="modal-stat">
-              <div class="modal-stat-head"><span>💾 Memória RAM</span><strong id="modalRamValue">--</strong></div>
+              <div class="modal-stat-head"><span>{{ icon('memory') }} Memória RAM</span><strong id="modalRamValue">--</strong></div>
               <div class="bar-track"><div class="bar-fill" id="modalRamBar" style="width:0%;background:linear-gradient(90deg,var(--violet),#bf94ff)"></div></div>
             </div>
             <div class="modal-stat">
-              <div class="modal-stat-head"><span>🗄️ Disco</span><strong id="modalDiskValue">--</strong></div>
+              <div class="modal-stat-head"><span>{{ icon('disk') }} Disco</span><strong id="modalDiskValue">--</strong></div>
               <div class="bar-track"><div class="bar-fill" id="modalDiskBar" style="width:0%;background:linear-gradient(90deg,var(--green),#7cf5bf)"></div></div>
             </div>
             <div class="modal-stat">
-              <div class="modal-stat-head"><span>⏱️ Uptime</span><strong id="modalUptimeValue">--</strong></div>
+              <div class="modal-stat-head"><span>{{ icon('clock') }} Uptime</span><strong id="modalUptimeValue">--</strong></div>
             </div>
           </div>
         </div>
@@ -439,9 +445,9 @@
       <div class="modal-info-row"><span>Agente</span><strong id="modalAgentField">--</strong></div>
       <div class="modal-info-row"><span>Impressoras</span><strong id="modalPrintersField">--</strong></div>
       <div class="modal-actions">
-        <button class="modal-action restart" id="btnRestart">🔄 Reiniciar</button>
-        <button class="modal-action shutdown" id="btnShutdown">⏻ Desligar</button>
-        <button class="modal-action chat" id="btnChat">💬 Mensagem</button>
+        <button class="modal-action restart" id="btnRestart">{{ icon('refresh') }} Reiniciar</button>
+        <button class="modal-action shutdown" id="btnShutdown">{{ icon('power') }} Desligar</button>
+        <button class="modal-action chat" id="btnChat">{{ icon('message') }} Mensagem</button>
       </div>
     </div>
   </div>
