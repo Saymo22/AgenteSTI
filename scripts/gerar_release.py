@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from sti.comum.releases import canonical_json, file_hash, verify_manifest, version_tuple
 from sti.comum.versao import AGENT_VERSION
+from scripts.assinatura_windows import signing_options, sign_and_verify
 
 
 def file_info(path):
@@ -55,7 +56,14 @@ def main():
     parser.add_argument('--key', type=Path, default=ROOT / '.release-keys/agent-signing-key.pem')
     parser.add_argument('--bump', choices=['patch', 'minor', 'major'])
     parser.add_argument('--github-release', action='store_true')
+    parser.add_argument('--sign-cert', help='Thumbprint do certificado Authenticode no repositório pessoal do Windows.')
+    parser.add_argument('--signtool', type=Path, help='Caminho do SignTool do Windows SDK.')
+    parser.add_argument('--timestamp-url', help='Servidor RFC 3161 do emissor do certificado.')
     args = parser.parse_args()
+    try:
+        signing = signing_options(args.sign_cert, args.timestamp_url, args.signtool)
+    except ValueError as error:
+        parser.error(str(error))
     version = AGENT_VERSION
     if not args.key.is_file():
         raise SystemExit('A chave privada de publicação não foi encontrada. Preserve a chave original em .release-keys.')
@@ -69,13 +77,16 @@ def main():
         (ROOT / 'sti/comum/versao.py').write_text(f'AGENT_VERSION = "{version}"\n', encoding='utf-8')
     notes = args.notes_file.read_text(encoding='utf-8') if args.notes_file else args.notes
     subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', 'packaging/STI_Agente_V3_4.spec'], cwd=ROOT, check=True)
+    sign_and_verify(ROOT / 'dist/STI_Agente.exe', signing)
     resources = ROOT / 'build/release-resources'
     resources.mkdir(parents=True, exist_ok=True)
     (resources / 'setup-info.json').write_text(json.dumps({'version': version, 'agent': file_info(ROOT / 'dist/STI_Agente.exe')}), encoding='utf-8')
     subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', 'packaging/STI_Agente_Setup.spec'], cwd=ROOT, check=True)
+    sign_and_verify(ROOT / 'dist/STI_Agente_Setup.exe', signing)
     artifacts = create_bundle(ROOT / 'dist/STI_Agente.exe', ROOT / 'dist/STI_Agente_Setup.exe', version,
                               notes, args.key, ROOT / 'dist/releases' / version)
     print('Release assinada gerada em ' + str(artifacts[0]))
+    print('Authenticode: ' + ('executáveis assinados e verificados.' if signing else 'não configurado; executáveis sem assinatura Windows.'))
     if args.github_release:
         notes_path = ROOT / 'build/release-notes.txt'
         notes_path.write_text(notes, encoding='utf-8')

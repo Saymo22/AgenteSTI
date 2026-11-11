@@ -451,3 +451,21 @@ test('cadastro de identificação preserva rascunho e envia nome e plataforma', 
   await run('saveOrganization({preventDefault(){}})');
   assert.equal(run('profilePayload.platform'),'Android');assert.equal(run('profilePayload.display_name'),'Novo');
 });
+
+
+test('atualização offline não fica apresentada como instalação em andamento', () => {
+ const {run}=loadPanel();
+ for(const status of ['downloading','installing','updated']) {
+   assert.equal(run('releaseDeviceStatus({agent_online:false,agent_version:"3.4.2"},{status:'+JSON.stringify(status)+',supported:true}).key'),'unconfirmed');
+ }
+ assert.equal(run('releaseDeviceStatus({agent_online:true},{status:"installing"}).key'),'progress');
+ assert.equal(run('releaseDeviceStatus({agent_online:false},{status:"rolled_back"}).key'),'failed');
+});
+
+test('tabela separa último resultado de confirmação atual e permite filtro sem comunicação', () => {
+ const {run,nodes}=loadPanel();
+ run('state.devices=[{device_id:"test",ip:"10.2.116.20",agent_online:false,agent_version:"3.4.2"}];releaseState.devices=[{device_id:"test",supported:true,status:"installing",result:"Último evento"}];document.getElementById("releaseStatusFilter").value="unconfirmed";renderReleaseDevices()');
+ const html=nodes.get('releaseDevices').innerHTML;
+ assert.ok(html.includes('Atualização sem confirmação recente'));assert.ok(html.includes('Última versão informada'));assert.ok(html.includes('Último resultado:'));assert.ok(html.includes('Configurada no último envio'));
+ assert.ok(!html.includes('Instalando atualização'));
+});
