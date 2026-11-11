@@ -1,0 +1,40 @@
+<section class="view" id="view-updates">
+  <div class="section-title-row">
+    <div class="section-title"><h2>Agentes e atualizações</h2><p>Controle as versões instaladas e a distribuição de releases.</p></div>
+    <button type="button" class="tool-btn" id="reloadReleases">{{ icon('refresh') }} Atualizar</button>
+  </div>
+  <p id="releaseFeedback" class="release-feedback" role="status" aria-live="polite"></p>
+  <div class="release-layout">
+    <div class="release-settings">
+      <article class="panel">
+        <h3>Publicar release</h3>
+        <form id="uploadReleaseForm" class="release-form">
+          <label for="releaseBundle">Pacote assinado (.sti)<input id="releaseBundle" type="file" accept=".sti,.zip" required></label>
+          <button type="submit" class="tool-btn" id="uploadReleaseButton">{{ icon('download') }} Enviar release</button>
+        </form>
+        <div id="releaseList" class="release-list"></div>
+      </article>
+      <article class="panel">
+        <h3>Distribuição automática</h3>
+        <p id="releaseActivePolicy" class="release-help">Nenhuma release liberada.</p>
+        <form id="releasePolicyForm" class="release-form">
+          <label for="releaseVersion">Versão<select id="releaseVersion" required><option value="">Selecione uma release</option></select></label>
+          <label for="releaseScope">Equipamentos<select id="releaseScope"><option value="all">Todos os agentes compatíveis</option><option value="selected">Grupo de teste</option></select></label>
+          <label for="releaseTargets" id="releaseTargetsLabel" hidden>Grupo de teste<select id="releaseTargets" multiple size="5"></select></label>
+          <div class="release-window">
+            <label for="releaseWindowStart">Início<input id="releaseWindowStart" type="time"></label>
+            <label for="releaseWindowEnd">Fim<input id="releaseWindowEnd" type="time"></label>
+          </div>
+          <p class="release-help" id="releaseServerClock">Horário do servidor. Deixe os dois horários vazios para distribuir a qualquer hora.</p>
+          <button type="submit" class="tool-btn primary" id="activateReleaseButton">{{ icon('check') }} Liberar versão</button>
+          <button type="button" class="tool-btn" id="pauseReleaseButton">Suspender distribuição</button>
+        </form>
+      </article>
+    </div>
+    <article class="panel release-inventory">
+      <div class="panel-head"><div><h3>Versões nas máquinas</h3><p id="releaseVersionSummary"></p></div></div>
+      <label class="release-filter-label" for="releaseStatusFilter">Situação<select id="releaseStatusFilter"><option value="all">Todas</option><option value="current">Atualizadas</option><option value="pending">Atualização disponível</option><option value="manual">Instalador inicial necessário</option><option value="progress">Em atualização</option><option value="failed">Falha / versão recuperada</option></select></label>
+      <div class="release-table-scroll"><table class="release-table"><thead><tr><th>Equipamento</th><th>Instalada</th><th>Situação</th><th>Atualização automática</th></tr></thead><tbody id="releaseDevices"></tbody></table></div>
+    </article>
+  </div>
+</section>

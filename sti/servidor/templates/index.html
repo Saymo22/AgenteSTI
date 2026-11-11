@@ -47,6 +47,7 @@
         <button class="nav-item" data-view="118"><span class="nav-icon">{{ icon('globe') }}</span><span>Faixa de IP 118</span></button>
         <button class="nav-item" data-view="119"><span class="nav-icon">{{ icon('monitor') }}</span><span>Rede Servidor 119</span></button>
         <button class="nav-item" data-view="mapping"><span class="nav-icon">{{ icon('network') }}</span><span>Mapeamento</span></button>
+        <button class="nav-item" data-view="updates"><span class="nav-icon">{{ icon('refresh') }}</span><span>Atualizações</span></button>
         <button class="nav-item" data-view="history"><span class="nav-icon">{{ icon('history') }}</span><span>Histórico de Log</span></button>
       </nav>
       </div>
@@ -329,6 +330,7 @@
           </div>
         </section>
 
+        {% include 'components/releases.html' %}
         <section class="view" id="view-history">
           <div class="section-title-row">
             <div class="section-title">
@@ -508,6 +510,7 @@
   <div class="toast" id="toast">Ação executada.</div>
 
   <script src="/static/som.js"></script>
+  <script src="/static/releases.js"></script>
   <script src="/static/painel.js"></script>
 </body>
 </html>

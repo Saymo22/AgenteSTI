@@ -1,4 +1,4 @@
-# STI Command Center — V3.3
+# STI Command Center — V3.4
 
 Monitoramento e gerenciamento de máquinas Windows, com servidor Flask/Waitress, banco SQLite e agente para os computadores dos usuários.
 
@@ -6,6 +6,9 @@ A rede padrão foi preservada: **10.2.116.0/22**, com os segmentos **116, 117, 1
 
 ## O que esta versão melhora
 
+- Instalador Windows por usuário, inicialização com o login e desinstalação pelas configurações do Windows.
+- Releases assinadas, versões dos agentes no painel, distribuição por grupo piloto ou para todos e janela de horário.
+- Atualização automática pela comunicação com o servidor STI, com verificação do pacote e recuperação da versão anterior quando a nova não inicia ou não confirma comunicação.
 - Telemetria validada: nome, usuário, versão do Windows, CPU, RAM, disco, uptime e impressoras.
 - Presença da máquina por ping separada da comunicação recente do agente.
 - Comandos condicionados às capacidades e à disponibilidade do agente.
@@ -29,22 +32,30 @@ AgenteSTI/
 │   ├── servidor/
 │   │   ├── app.py              # API, scanner, autenticação e fila
 │   │   ├── relatorios.py       # Relatórios e exportação
-│   │   ├── organizacao.py     # Cadastro administrativo das máquinas
+│   │   ├── organizacao.py      # Cadastro administrativo das máquinas
+│   │   ├── releases.py         # Publicação e distribuição das atualizações
 │   │   ├── templates/          # Páginas HTML
 │   │   └── static/             # CSS, JavaScript, imagens e bibliotecas
 │   ├── agente/
-│   │   └── cliente.py          # Telemetria e comandos do agente
+│   │   ├── cliente.py          # Telemetria e comandos do agente
+│   │   ├── instalacao.py       # Instalação e registro no Windows
+│   │   └── atualizacao.py      # Download, troca e recuperação do executável
 │   └── comum/
-│       └── configuracao.py     # Configuração compartilhada
+│       ├── configuracao.py     # Configuração compartilhada
+│       ├── versao.py           # Versão única do agente
+│       └── releases.py         # Assinatura e validação dos pacotes
 ├── scripts/
-│   └── preparar_config.py      # Geração dos arquivos locais
+│   ├── preparar_config.py      # Geração dos arquivos locais
+│   ├── chave_release.py        # Preparação da chave de assinatura
+│   └── gerar_release.py        # Build e release assinada
 ├── config/
 │   └── sti-config.example.json # Exemplo sem credenciais
 ├── requirements/
 │   ├── dev.txt                 # Dependências para build
 │   └── windows-lock.txt        # Versões validadas no Windows
 ├── packaging/
-│   ├── STI_Agente_V3_3.spec     # Build atual
+│   ├── STI_Agente_V3_4.spec     # Build atual do agente
+│   ├── STI_Agente_Setup.spec    # Build do instalador
 │   └── legacy/                 # Especificações antigas
 └── tests/                      # Testes Python e JavaScript
 ```
@@ -88,7 +99,7 @@ Ele cria dois arquivos ignorados pelo Git:
 
 O script não sobrescreve configurações existentes. Na cópia local desta entrega, os dois arquivos já foram gerados. Abra `sti-config.json` no PyCharm para consultar ou editar a senha de login. Confira se `STI_SERVER_IP` em `agent-config.json` corresponde à máquina que executará o servidor.
 
-**Não distribua o `sti-config.json` do servidor aos usuários.** Para os computadores dos usuários, copie `agent-config.json` e renomeie a cópia para `sti-config.json` ao lado do executável.
+**Não distribua o `sti-config.json` do servidor aos usuários.** No instalador, importe `agent-config.json`. Na execução portátil, renomeie uma cópia dele para `sti-config.json` ao lado do executável.
 
 As variáveis de ambiente têm prioridade sobre o JSON. `STI_CONFIG_FILE` permite apontar para outro arquivo. Sem essa variável, o JSON é procurado na raiz do projeto ou junto ao executável empacotado. Não há leitura automática de `.env`.
 
@@ -134,9 +145,21 @@ O agente pode rodar a partir de `agente.py` com as dependências instaladas, ou 
 .\.venv\Scripts\python.exe agente.py
 ```
 
-Distribua o executável atual e o `sti-config.json` preparado **a partir de `agent-config.json`**, na mesma pasta. Não é necessário instalar Python nas máquinas que usam o executável.
+Para distribuir, use **`STI_Agente_Setup_3.4.0.exe`**, importe `agent-config.json`, confira o servidor e instale. Não é necessário instalar Python na estação. O instalador também permite preencher servidor, porta, token e HTTPS diretamente.
 
-Execute na sessão interativa do usuário, para que as mensagens apareçam no desktop. O projeto não instala um serviço nem cria uma tarefa de inicialização automaticamente; para iniciar com o login, configure uma tarefa na sessão do usuário. Os dados de usuário priorizam uma sessão Windows ativa e usam o usuário do processo como fallback.
+A instalação fica em **`%LOCALAPPDATA%\STI\Agent`**, na conta que executa o instalador. Por padrão, registra a inicialização no login dessa conta e uma entrada em **Aplicativos instalados** do Windows. O agente funciona na sessão do usuário, preservando as mensagens no desktop; não é um serviço de sistema. Os dados de usuário priorizam uma sessão Windows ativa e usam o usuário do processo como fallback.
+
+Agentes V3.3 e anteriores precisam receber este instalador **uma vez** para habilitar a atualização automática. Execute-o na mesma conta usada pelo agente atual, importe sua configuração e preserve o arquivo de identidade. O instalador encerra executáveis legados conhecidos dessa conta. Remova tarefas, atalhos ou outros mecanismos manuais de inicialização do executável antigo para que ele não volte no próximo login.
+
+O instalador preserva configurações existentes e o UUID; permite atualização manual e recusa uma versão inferior à instalada. A desinstalação remove executáveis e registros de inicialização, preservando configuração, identidade, logs e diário de comandos.
+
+Para instalação sem interface, com configuração já preparada:
+
+```powershell
+.\STI_Agente_Setup_3.4.0.exe --silent --config .\agent-config.json
+```
+
+As opções `--no-startup` e `--no-launch` desabilitam, respectivamente, o início no login e a execução ao terminar a instalação. A instalação silenciosa também é por usuário: executá-la como outra conta instala para essa outra conta.
 
 ### Configuração do agente
 
@@ -160,7 +183,7 @@ Para validar coleta e configuração sem iniciar o loop, sem comunicar com o ser
 ```powershell
 .\.venv\Scripts\python.exe agente.py --check
 # Ou, na máquina do usuário:
-.\STI_Agente_V3_3.exe --check
+.\STI_Agente.exe --check
 ```
 
 O diagnóstico mostra dados da máquina local. RAM e disco são enviados em unidades de 1024³ bytes; falha na consulta de disco é enviada como valor ausente, sem fingir disco de tamanho zero.
@@ -177,16 +200,63 @@ O painel acompanha `queued → delivered → accepted → completed/rejected/fai
 
 Ao exceder o prazo, o job passa para `expired`, libera a fila e registra que a execução não foi confirmada. Confira a máquina antes de reenviar. Nenhum protocolo de confirmação garante conhecer o efeito de uma ação interrompida exatamente durante sua execução.
 
-## Gerar o executável atualizado
+## Gerar instalador e release
 
-No Windows:
+No Windows, com Python 3.12 de 64 bits:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements/dev.txt
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm packaging/STI_Agente_V3_3.spec
+.\.venv\Scripts\python.exe scripts/gerar_release.py --notes "Instalador e atualização automática do agente."
 ```
 
-Saída: `dist\STI_Agente_V3_3.exe`. A configuração atual gera o executável sem console (`console=False`); a execução pelo PyCharm mantém seu terminal. Para diagnóstico com saída visível, use o fonte ou gere um build com console. Os `.spec` antigos ficam em `packaging/legacy/` como alternativas de nome; use V3.3 para a distribuição atual. O JSON com credenciais não é embutido no build.
+Nesta cópia, a chave de publicação já foi criada em **`.release-keys/agent-signing-key.pem`**, ignorada pelo Git. Guarde uma cópia segura dessa chave na máquina usada para publicar versões. Ela não deve ir para Git, instaladores, estações ou pacotes de release. A chave pública em `sti/comum/release-public-key.pem` é versionada e embutida no agente e no servidor.
+
+Em um projeto novo, sem chaves anteriores, `python scripts/chave_release.py` cria o par inicial sem sobrescrever arquivos existentes. Em outra máquina de desenvolvimento deste projeto, restaure a **mesma chave privada**; gerar outra chave não permite atualizar os agentes já distribuídos. A rotação da confiança exige uma migração própria.
+
+O build gera:
+
+| Arquivo | Uso |
+| --- | --- |
+| `dist/STI_Agente.exe` | Executável portátil; não habilita atualização automática sem instalação. |
+| `dist/releases/3.4.0/STI_Agente_Setup_3.4.0.exe` | Instalação inicial nas estações, sem Python. |
+| `dist/releases/3.4.0/STI_Release_3.4.0.sti` | Pacote assinado para importar no painel STI. |
+| `dist/releases/3.4.0/manifest.json` | Versão, notas, hashes e assinatura. |
+| `dist/releases/3.4.0/agent.zip` | Executável empacotado para download pelos agentes. |
+
+O executável mantém o nome `STI_Agente.exe` entre versões; a versão é definida em `sti/comum/versao.py`. Para gerar a próxima correção, por exemplo `3.4.1`:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/gerar_release.py --bump patch --notes "Descrição das correções desta versão."
+```
+
+Também são aceitos `--bump minor`, `--bump major` e `--notes-file arquivo.txt`. O incremento altera o fonte da versão; inclua essa alteração no próximo commit. Uma versão importada no servidor é imutável: alterações de código exigem outro número de versão. `dist/` e `build/` permanecem fora do Git.
+
+Os builds são sem console. Para diagnóstico com saída visível, execute o fonte pelo PyCharm. Configurações com credenciais não são embutidas. A assinatura Ed25519 protege o mecanismo de atualização do STI; o instalador ainda não recebe assinatura Authenticode de um certificado comercial do Windows.
+
+### Distribuir pelo servidor STI
+
+1. Atualize primeiro o servidor, instale as dependências atualizadas (`pip install -r requirements.txt`) e reinicie-o. O upload usa Flask 3.1; a migração do banco é aditiva.
+2. Entre no painel e abra **Atualizações**. Importe `STI_Release_3.4.0.sti`; importar não inicia a distribuição.
+3. Baixe o instalador pela lista de versões ou use o arquivo local e instale uma vez nas estações com agente antigo. Máquinas descobertas apenas por ping não podem receber instalação remota por este mecanismo.
+4. Nas próximas releases, selecione a versão e comece com **Grupo piloto**, escolhendo equipamentos pelo ID permanente. Depois de conferir o resultado, libere para **Todos os agentes**.
+5. Opcionalmente, defina início e fim da janela de horário. O painel mostra o horário do servidor; uma janela como `22:00–06:00` atravessa a meia-noite. Sem janela, a oferta pode ocorrer a qualquer horário.
+6. Clique em **Liberar atualização** e acompanhe versão instalada, compatibilidade e resultado por estação. **Suspender distribuição** impede novas ofertas; uma atualização já iniciada pode terminar.
+
+A versão disponível é oferecida na resposta ao heartbeat existente. O agente baixa o pacote do próprio servidor STI com autenticação; a estação não precisa acessar GitHub nem consultar outro serviço. Somente instalações compatíveis e com versão inferior recebem a atualização. Agentes executados pelo fonte ou de forma portátil continuam funcionando e aparecem como instalação manual.
+
+Antes de trocar o executável, o agente valida assinatura, tamanho e SHA-256. Aguarda comandos em execução e resultados pendentes antes de atualizar. Um processo auxiliar troca o arquivo, inicia a nova versão e espera até **90 segundos** pela confirmação de comunicação com o servidor. Em caso de falha de inicialização ou ausência dessa confirmação, tenta restaurar e iniciar a versão anterior. Configuração, UUID e diário de comandos são preservados. A versão anterior fica em `previous-agent.exe`; pastas temporárias concluídas são limpas na próxima tentativa de atualização.
+
+Falhas transitórias de download podem ser tentadas novamente após cinco minutos. Uma versão rejeitada por integridade ou recuperada após falha não fica sendo reinstalada em ciclo: corrija a release e publique outra versão, ou libere a distribuição novamente para autorizar uma nova tentativa. O estado fica em `%LOCALAPPDATA%\STI\update-state.json`, além do log do agente. Atualizações interrompidas por reinicialização são conferidas após a próxima comunicação.
+
+### Releases no GitHub
+
+O funcionamento interno não depende de uma release no GitHub. Para publicar os artefatos também lá, instale o GitHub CLI, execute `gh auth login`, faça commit e push do código correspondente e use explicitamente:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/gerar_release.py --notes-file notas.txt --github-release
+```
+
+Essa opção cria a tag/release `v<versão>` no commit atual e envia o instalador, o pacote `.sti` e o manifesto. Não reutilize um número já publicado. Publicar o código com `git push` não envia os executáveis e não ativa distribuição nas estações. A integração com GitHub CLI exige credenciais locais e não foi executada nesta entrega.
 
 ## Acabamento visual do painel
 
@@ -253,7 +323,7 @@ Quando o IP muda, o cadastro permanece na mesma identidade. Comandos pendentes s
 ### Atualização e migração
 
 1. Faça backup do `monitor.db` e atualize o servidor primeiro. A migração adiciona colunas e tabelas, preservando as tabelas existentes.
-2. Distribua `STI_Agente_V3_3.exe` com a configuração de agente já utilizada, mantendo IP do servidor, token e permissões de energia. A rede padrão continua `10.2.116.0/22`.
+2. Distribua o instalador V3.4 e importe a configuração de agente já utilizada, mantendo IP do servidor, token e permissões de energia. A rede padrão continua `10.2.116.0/22`.
 3. Preserve o arquivo `identity.db` nas atualizações. O primeiro envio do agente atualizado associa o cadastro legado do seu IP à identidade permanente. Antes desse primeiro envio, o inventário antigo só possui a associação por IP; confira o cadastro se houve troca de equipamento naquele endereço.
 4. Confirme o ID permanente, os MACs e a série no pop-up. Agentes antigos funcionam nos endereços ainda sem identidade permanente; um agente antigo é recusado em endereço já vinculado a uma identidade nova, para não sobrescrevê-la.
 
@@ -277,7 +347,7 @@ Para renovar explicitamente a identidade da cópia, pare o agente e execute pelo
 .\.venv\Scripts\python.exe agente.py --new-identity
 ```
 
-Ou use `STI_Agente_V3_3.exe --new-identity` na estação. A operação é local, não envia comandos e exige que outra instância não esteja rodando. O novo UUID fica registrado no log. Depois, inicie o agente normalmente e confira o novo equipamento. UUIDs de instalações substituídas pela recuperação são recusados, evitando que uma cópia antiga retome o cadastro.
+Ou use `STI_Agente.exe --new-identity` na estação. A operação é local, não envia comandos e exige que outra instância não esteja rodando. O novo UUID fica registrado no log. Depois, inicie o agente normalmente e confira o novo equipamento. UUIDs de instalações substituídas pela recuperação são recusados, evitando que uma cópia antiga retome o cadastro.
 
 ## APIs e relatórios
 
@@ -296,6 +366,12 @@ Ou use `STI_Agente_V3_3.exe --new-identity` na estação. A operação é local,
 | GET | `/api/commands/<id>` | Estado e resultado do comando. |
 | POST | `/api/agent` | Telemetria e recebimento de comandos; exige `X-Agent-Token`. |
 | POST | `/api/agent/command-status` | JSON com `id`, `status`, `result`; exige token e mesmo IP de destino. |
+| GET/POST | `/api/releases` | Lista ou importa release assinada via multipart com campo `release`; sessão administrativa. |
+| POST | `/api/releases/activate` | Libera versão para todos ou IDs selecionados, com janela de horário opcional. |
+| POST | `/api/releases/pause` | Suspende novas ofertas de atualização. |
+| GET | `/api/releases/<version>/installer` | Download do instalador; sessão administrativa. |
+| GET | `/api/agent/releases/<version>/package` | Download autenticado por token e `X-Agent-ID`, vinculado ao IP atual da estação. |
+| POST | `/api/agent/update-status` | Informa progresso autenticado durante a atualização. |
 | GET | `/relatorios` | Relatórios com filtros `start`, `end`, `device_id`, `ip`, `category`. |
 | GET | `/api/report/events.csv` | Exportação dos eventos com os mesmos filtros. |
 
@@ -312,6 +388,8 @@ node --test tests/test_painel.cjs
 
 Os testes usam bancos temporários e não executam ações de energia. Foram validados: autenticação, isolamento por IP, faixas originais, métricas, migração do banco, concorrência da fila, transições, expiração, perda de confirmações, recuperação após reinício, CSV, histórico e escape de HTML. O cadastro tem testes de persistência após heartbeat, scanner e reinício, edição parcial, conflitos, filtros, grupos e preservação de campos durante edição. Também houve coleta real de hardware no Windows e teste do painel no Edge headless, com dados fictícios e scanner desativado.
 
+O módulo de releases cobre assinatura e adulteração, autenticação, isolamento do download, versões imutáveis, grupos, janelas atravessando a meia-noite, preservação da instalação, confirmação de saúde, retomada após download interrompido e recuperação da versão anterior. Foi realizada uma atualização real entre executáveis Windows `3.4.0 → 3.4.1`, preservando UUID e configuração, seguida de uma release inválida para confirmar a recuperação. Esses testes usaram diretórios temporários, sem registrar inicialização no Windows nem alterar agentes de produção. No Edge, foram verificados upload do pacote real, grupo piloto, suspensão, download do instalador e layout entre 360 e 1600 px.
+
 ## Publicação
 
 Faça o merge das alterações na `main` antes de executar `deploy.ps1`. O script publica primeiro no remoto `production`, depois no `origin`, e consulta o serviço por SSH no host `agente-sti`; esses destinos precisam estar configurados no ambiente de implantação. Ele recusa outras branches e interrompe a execução se a preparação ou o commit falhar.
@@ -327,4 +405,4 @@ Não houve implantação nem teste nas máquinas reais dos usuários. Antes de d
 - Não publique configurações reais nem reutilize o token que aparecia no código antigo. Os arquivos gerados usam um novo token; atualize os agentes junto com o servidor.
 - O repositório não define uma licença própria. A licença do Chart.js está em `sti/servidor/static/vendor/Chart.js-LICENSE.md`.
 
-Referências: [execução com Waitress na documentação do Flask](https://flask.palletsprojects.com/en/stable/deploying/waitress/) e [Chart.js 4.5.1](https://github.com/chartjs/Chart.js/tree/v4.5.1).
+Referências: [execução com Waitress na documentação do Flask](https://flask.palletsprojects.com/en/stable/deploying/waitress/), [API do Flask](https://flask.palletsprojects.com/en/stable/api/), [assinaturas Ed25519](https://cryptography.io/en/latest/hazmat/primitives/asymmetric/ed25519/) e [Chart.js 4.5.1](https://github.com/chartjs/Chart.js/tree/v4.5.1).

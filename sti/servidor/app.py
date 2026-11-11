@@ -17,7 +17,7 @@ import math
 from collections import defaultdict, deque
 from contextlib import contextmanager
 from sti.comum.configuracao import BASE_DIR, setting
-from sti.servidor import organizacao, inventario
+from sti.servidor import organizacao, inventario, releases
 from sti.servidor.identificacao import HostnameResolver
 
 from pathlib import Path
@@ -374,6 +374,7 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_ip ON audit_events(ip)")
         organizacao.init_schema(conn)
         inventario.init_schema(conn)
+        releases.init_schema(conn)
 
     logger.info(
         "Banco de dados inicializado."
@@ -1446,6 +1447,7 @@ def api_agent():
     try:
         hw, capabilities = validate_telemetry(data)
         profile = inventario.validate_identity(data)
+        update_report = releases.validate_update_status(data)
     except (ValueError, AttributeError) as error:
         return jsonify(ok=False, error=str(error)), 400
     now = datetime.now()
@@ -1483,6 +1485,8 @@ def api_agent():
                 'last_seen':now,'online':True,'agent_seen':True,
             }
             write_device(conn, ip, device)
+            releases.record_heartbeat(conn, device.get('device_id'), device['agent_version'], update_report)
+            update = releases.update_offer(conn, device.get('device_id'), device['agent_version'], update_report[0])
         if registration and registration['previous_ip'] != ip:
             previous_ip = registration['previous_ip']
             if devices.get(previous_ip, {}).get('device_id') == device['device_id']:
@@ -1491,7 +1495,7 @@ def api_agent():
         if was_offline:
             register_change(ip, device['name'], 'online', device.get('device_id'))
         job = deliver_command(ip, device.get('device_id'))
-    return jsonify(ok=True, device_id=device.get('device_id'),
+    return jsonify(ok=True, device_id=device.get('device_id'), update=update,
         command_id=job['id'] if job else None, command=job['command'] if job else None,
         message=job['message'] if job else None)
 
@@ -1980,6 +1984,7 @@ registrar_relatorios(
 
 organizacao.register_routes(app, require_admin, db_connect, devices, lock, valid_ip)
 inventario.register_routes(app, require_admin, db_connect, devices, lock, OFFLINE_THRESHOLD)
+releases.register_routes(app, require_admin, db_connect, lambda: DB_FILE, agent_authenticated, valid_ip)
 
 
 # ==========================================

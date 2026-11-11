@@ -43,13 +43,16 @@ import requests
 import psutil
 from sti.comum.configuracao import setting, positive_int
 from sti.agente.identidade import collect_identity, persistent_identity, renew_identity
+from sti.agente import atualizacao
+from sti.comum.versao import AGENT_VERSION
+from sti.comum.configuracao import CONFIG_FILE
 
 
 # ============================================
 # 1 - CONFIGURAÇÕES DO SERVIDOR
 # ============================================
 
-VERSION = "3.3.0"
+VERSION = AGENT_VERSION
 
 # IP do computador onde está o app.py
 SERVER_IP = setting("STI_SERVER_IP", "10.2.116.121")
@@ -482,6 +485,7 @@ def coletar_dados():
 
     return {
         **collect_identity(),
+        **atualizacao.update_report(),
         "name": obter_hostname()[:120],
 
         "user": obter_usuario()[:120],
@@ -865,6 +869,8 @@ def comunicar_servidor(
         )
 
         processar_comando(data)
+        atualizacao.remember_offer(data.get('update'))
+        atualizacao.acknowledge_health()
 
         return True
 
@@ -1064,6 +1070,12 @@ def iniciar_agente():
                 )
                 if sucesso:
                     retry_pending_commands()
+                    with journal_connect() as conn:
+                        pending_job = conn.execute("SELECT 1 FROM jobs WHERE stage!='acknowledged' LIMIT 1").fetchone()
+                    with processed_lock:
+                        busy = bool(processed_commands) or bool(pending_job)
+                    if not busy and atualizacao.begin_update(session_http, SERVER_URL, AGENT_TOKEN, agent_id, CONFIG_FILE):
+                        return
 
 
                 # Mostrar o resultado inicial
