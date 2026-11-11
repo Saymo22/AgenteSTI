@@ -1,6 +1,7 @@
 """Instalador por usuário, configuração inicial e desinstalação pelo Windows."""
 import argparse
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -9,7 +10,7 @@ import tempfile
 import threading
 from pathlib import Path
 
-from sti.agente.instalacao import default_install_root, install_agent, remove_installation, validate_config
+from sti.agente.instalacao import default_install_root, install_agent, remove_installation, validate_config, configure_install_logging
 from sti.comum.releases import atomic_json, verify_file
 
 
@@ -71,10 +72,10 @@ def graphical_install(root):
         install_button.config(state='normal')
         if error:
             status.set('Instalação não concluída.')
-            messagebox.showerror('Instalação', error)
+            messagebox.showerror('Instalação', error + '\n\nLog: ' + str(configure_install_logging()))
         else:
-            status.set('Agente instalado e iniciado. Confira a comunicação no painel STI.')
-            messagebox.showinfo('Instalação concluída', 'O agente foi instalado para este usuário e iniciado.')
+            status.set('Inicialização local confirmada. Confira a comunicação no painel STI.')
+            messagebox.showinfo('Instalação concluída', 'O agente foi instalado e confirmou sua inicialização local. Confira a comunicação no painel STI.')
 
     def install():
         nonlocal busy
@@ -93,6 +94,7 @@ def graphical_install(root):
             try:
                 install_agent(payload, root, info['version'], config, startup=start_at_login, setup_source=sys.executable)
             except Exception as error:
+                logging.getLogger('STI_INSTALL').exception('Instalação não concluída.')
                 window.after(0, lambda text=str(error): finish(text))
             else:
                 window.after(0, finish)
@@ -123,6 +125,8 @@ def main():
     parser.add_argument('--remove-installed', action='store_true')
     parser.add_argument('--inspect', type=Path)
     args = parser.parse_args()
+    configure_install_logging()
+    logging.getLogger('STI_INSTALL').info('Instalador aberto. silent=%s uninstall=%s', args.silent, args.uninstall)
     try:
         if args.inspect:
             _, info = resources()
@@ -147,6 +151,7 @@ def main():
         else:
             graphical_install(args.target)
     except Exception as error:
+        logging.getLogger('STI_INSTALL').exception('Operação do instalador não concluída.')
         if args.silent or args.inspect or args.remove_installed:
             raise
         from tkinter import messagebox

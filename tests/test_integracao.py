@@ -440,7 +440,8 @@ class IntegrationTests(unittest.TestCase):
         job_id = self.command().json["command_id"]
         self.heartbeat()
         self.store_local_job(job_id)
-        def post(url, json, headers, timeout):
+        def post(url, json, headers, timeout, allow_redirects):
+            self.assertFalse(allow_redirects)
             reply = self.client.post("/api/agent/command-status", json=json, headers=headers,
                                      environ_overrides={"REMOTE_ADDR": self.ip})
             response = requests.Response()

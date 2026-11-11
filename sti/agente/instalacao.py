@@ -3,6 +3,8 @@ import contextlib
 import ctypes
 import hashlib
 import json
+import logging
+from logging.handlers import RotatingFileHandler
 import os
 import shutil
 import subprocess
@@ -15,12 +17,56 @@ import psutil
 from sti.comum.releases import AGENT_FILENAME, atomic_json, read_json, version_tuple
 
 PRODUCT = 'AgenteSTI'
+logger = logging.getLogger('STI_INSTALL')
 CONFIG_KEYS = {'STI_SERVER_IP', 'STI_SERVER_PORT', 'STI_AGENT_TOKEN', 'STI_USE_HTTPS',
                'STI_ALLOW_POWER_COMMANDS', 'STI_IDENTITY_FILE', 'AGENT_INTERVAL', 'RETRY_INTERVAL'}
 
 
 def default_install_root():
     return Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'STI' / 'Agent'
+
+
+def configure_install_logging():
+    path = default_install_root().parent / 'logs' / 'instalador.log'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not logger.handlers:
+        handler = RotatingFileHandler(path, maxBytes=2 * 1024 * 1024, backupCount=3, encoding='utf-8')
+        handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)s | %(message)s'))
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+    return path
+
+
+def acknowledge_installation():
+    path = os.environ.pop('STI_INSTALL_READY_FILE', None)
+    nonce = os.environ.pop('STI_INSTALL_READY_NONCE', None)
+    if path and nonce:
+        from sti.comum.versao import AGENT_VERSION
+        atomic_json(path, {'nonce': nonce, 'version': AGENT_VERSION})
+
+
+def confirm_agent_start(root, version, timeout=45):
+    ready = Path(root) / ('install-ready-' + uuid.uuid4().hex + '.json')
+    nonce = str(uuid.uuid4())
+    process = launch_agent(root, {'STI_INSTALL_READY_FILE': str(ready), 'STI_INSTALL_READY_NONCE': nonce})
+    logger.info('Agente iniciado; aguardando inicialização local. PID=%s', process.pid)
+    try:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                raise RuntimeError('O agente encerrou durante a inicialização. Consulte os logs do agente e do Endpoint.')
+            report = read_json(ready, {})
+            if report.get('nonce') == nonce and report.get('version') == version:
+                time.sleep(1)
+                if process.poll() is not None:
+                    raise RuntimeError('O agente encerrou após inicializar. Consulte os logs do agente e do Endpoint.')
+                logger.info('Inicialização local confirmada para a versão %s.', version)
+                return
+            time.sleep(.2)
+        raise RuntimeError('O agente não confirmou a inicialização local no prazo. Consulte os logs do agente e do Endpoint.')
+    finally:
+        ready.unlink(missing_ok=True)
 
 
 def validate_config(config):
@@ -101,6 +147,8 @@ def launch_agent(root, extra_env=None, config_file=None):
     env = {**os.environ, 'STI_CONFIG_FILE': str(config_file or root / 'sti-config.json')}
     env.pop('STI_UPDATE_HEALTH_FILE', None)
     env.pop('STI_UPDATE_HEALTH_NONCE', None)
+    env.pop('STI_INSTALL_READY_FILE', None)
+    env.pop('STI_INSTALL_READY_NONCE', None)
     env.update(extra_env or {})
     return subprocess.Popen([str(root / AGENT_FILENAME)], cwd=root, env=env,
                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
@@ -114,14 +162,18 @@ def stop_installed_agent(root, include_legacy=False):
     for process in psutil.process_iter(['pid', 'exe']):
         try:
             path = Path(process.info['exe']).resolve() if process.info['exe'] else None
-            same_installation = path == executable
+            same_installation = path == executable and process.username() == owner
+            # Nome sozinho não comprova a origem de uma instalação portátil antiga.
             legacy = include_legacy and path and path.name.casefold() in legacy_names and process.username() == owner
-            if process.pid != os.getpid() and (same_installation or legacy):
+            if legacy and not same_installation:
+                raise RuntimeError('Feche manualmente o agente antigo antes de instalar: ' + str(path))
+            if process.pid != os.getpid() and same_installation:
                 matching.append(process)
         except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
             continue
     for process in reversed(matching):
         try:
+            logger.info('Encerrando processo da instalação reconhecida. PID=%s', process.pid)
             process.terminate()
         except psutil.NoSuchProcess:
             pass
@@ -154,20 +206,31 @@ def register_windows(root, version, startup):
 
 
 def install_agent(payload, root, version, config, startup=True, launch=True, setup_source=None, register=True):
+    configure_install_logging()
     root = Path(root).resolve()
     root.mkdir(parents=True, exist_ok=True)
-    old_config = read_json(root / 'sti-config.json', {})
-    merged_config = validate_config({**old_config, **config})
-    marker = read_json(root / 'installation.json', {})
-    if marker.get('version') and version_tuple(marker['version']) > version_tuple(version):
-        raise ValueError('A versão instalada é mais recente. Utilize o instalador atual.')
+    logger.info('Preparando instalação da versão %s em %s.', version, root)
     with installation_lock(root):
+        old_config = read_json(root / 'sti-config.json', {})
+        merged_config = validate_config({**old_config, **config})
+        marker = read_json(root / 'installation.json', {})
+        if marker:
+            installation_marker(root)
+        if marker.get('version') and version_tuple(marker['version']) > version_tuple(version):
+            raise ValueError('A versão instalada é mais recente. Utilize o instalador atual.')
         executable = root / AGENT_FILENAME
         backup = root / 'previous-agent.exe'
         had_agent = executable.exists()
         incoming = root / 'incoming-agent.exe'
+        logger.info('Copiando o executável para preparação.')
         shutil.copyfile(payload, incoming)
-        stop_installed_agent(root, include_legacy=True)
+        logger.info('Verificando processos antes da substituição.')
+        try:
+            stop_installed_agent(root, include_legacy=True)
+        except Exception:
+            logger.exception('Preparação interrompida antes de substituir o executável.')
+            incoming.unlink(missing_ok=True)
+            raise
         moved_backup = False
         installed_new = False
         try:
@@ -176,17 +239,21 @@ def install_agent(payload, root, version, config, startup=True, launch=True, set
                 moved_backup = True
             replace_retry(incoming, executable)
             installed_new = True
+            logger.info('Executável instalado; salvando configuração e identificação da instalação.')
             atomic_json(root / 'sti-config.json', merged_config)
             atomic_json(root / 'installation.json', {'product': PRODUCT, 'root': str(root),
                         'install_id': marker.get('install_id') or str(uuid.uuid4()), 'version': version,
                         'startup': startup, 'registered': register})
             if setup_source:
+                logger.info('Preparando desinstalador local.')
                 destination = root / 'STI_Agente_Setup.exe'
                 if Path(setup_source).resolve() != destination:
                     shutil.copyfile(setup_source, destination)
             if register:
+                logger.info('Registrando aplicativo e opção de inicialização no Windows. startup=%s', startup)
                 register_windows(root, version, startup)
         except Exception:
+            logger.exception('Falha durante instalação; restaurando os arquivos anteriores.')
             if installed_new:
                 executable.unlink(missing_ok=True)
             if moved_backup:
@@ -203,7 +270,12 @@ def install_agent(payload, root, version, config, startup=True, launch=True, set
                 launch_agent(root)
             raise
         if launch:
-            launch_agent(root)
+            try:
+                confirm_agent_start(root, version)
+            except Exception:
+                logger.exception('Arquivos instalados, mas a inicialização do agente não foi confirmada.')
+                raise
+        logger.info('Instalação concluída. inicialização solicitada=%s', launch)
     return root
 
 

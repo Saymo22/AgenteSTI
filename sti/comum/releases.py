@@ -3,6 +3,8 @@ import base64
 import hashlib
 import json
 import re
+import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -91,10 +93,24 @@ def unpack_agent(package, destination, manifest):
 def atomic_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + '.tmp')
-    with temporary.open('w', encoding='utf-8') as stream:
-        json.dump(value, stream, ensure_ascii=False, indent=2)
-    temporary.replace(path)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
+                                         prefix=path.name + '.', suffix='.tmp', delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(value, stream, ensure_ascii=False, indent=2)
+        deadline = time.monotonic() + 3
+        while True:
+            try:
+                temporary.replace(path)
+                break
+            except PermissionError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(.05)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def read_json(path, default=None):
