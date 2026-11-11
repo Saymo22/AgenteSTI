@@ -4,7 +4,15 @@ import uuid
 
 from flask import jsonify, request
 
-FIELDS = ("department", "room", "responsible")
+FIELDS = ("department", "room", "responsible", "display_name", "platform")
+PLATFORMS = {'', 'Windows', 'Linux', 'Android', 'iOS', 'macOS', 'Impressora', 'Equipamento de rede', 'Outro'}
+
+
+def migrate_identification(conn, table):
+    columns = {row[1] for row in conn.execute(f'PRAGMA table_info({table})')}
+    for field in ('display_name', 'platform'):
+        if field not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {field} TEXT NOT NULL DEFAULT ''")
 
 
 def empty_organization():
@@ -19,13 +27,14 @@ def init_schema(conn):
         responsible TEXT NOT NULL DEFAULT '',
         updated_at TEXT NOT NULL
     )""")
+    migrate_identification(conn, 'device_organization')
 
 
 def load_organizations(db_connect):
     with db_connect() as conn:
-        rows = conn.execute("""SELECT ip, department, room, responsible, updated_at
+        rows = conn.execute("""SELECT ip, department, room, responsible, display_name, platform, updated_at
                                FROM device_organization""").fetchall()
-        rows += conn.execute("SELECT device_id,department,room,responsible,updated_at FROM machine_organization").fetchall()
+        rows += conn.execute("SELECT device_id,department,room,responsible,display_name,platform,updated_at FROM machine_organization").fetchall()
     return {ip: dict(zip((*FIELDS, "updated_at"), values)) for ip, *values in rows}
 
 
@@ -41,7 +50,7 @@ def register_routes(app, require_admin, db_connect, devices, lock, valid_ip):
         data = request.get_json(silent=True)
         allowed = {*FIELDS, "expected_updated_at"}
         if not isinstance(data, dict) or not data or set(data) - allowed or not set(data) & set(FIELDS):
-            return jsonify(ok=False, error="Informe setor, sala ou responsável"), 400
+            return jsonify(ok=False, error="Informe identificação, setor, sala ou responsável"), 400
         changes = {}
         for field in FIELDS:
             if field not in data:
@@ -51,6 +60,8 @@ def register_routes(app, require_admin, db_connect, devices, lock, valid_ip):
                     or any(ord(character) < 32 for character in value)):
                 return jsonify(ok=False, error="Os campos devem ser textos de até 120 caracteres, sem caracteres de controle"), 400
             changes[field] = value.strip()
+        if 'platform' in changes and changes['platform'] not in PLATFORMS:
+            return jsonify(ok=False, error='Sistema ou tipo de dispositivo inválido'), 400
         expected = data.get("expected_updated_at")
         if expected is not None and not isinstance(expected, str):
             return jsonify(ok=False, error="Versão do cadastro inválida"), 400
@@ -68,7 +79,7 @@ def register_routes(app, require_admin, db_connect, devices, lock, valid_ip):
             else:
                 return jsonify(ok=False, error="Dispositivo não encontrado"), 404
             name = device['name'] if device else ''
-            row = conn.execute(f"SELECT department,room,responsible,updated_at FROM {table} WHERE {key}=?", (value,)).fetchone()
+            row = conn.execute(f"SELECT department,room,responsible,display_name,platform,updated_at FROM {table} WHERE {key}=?", (value,)).fetchone()
             current = dict(zip((*FIELDS, "updated_at"), row)) if row else empty_organization()
             if expected is not None and expected != current["updated_at"]:
                 return jsonify(ok=False, error="Cadastro alterado em outra sessão. Reabra a máquina antes de salvar."), 409
@@ -76,13 +87,16 @@ def register_routes(app, require_admin, db_connect, devices, lock, valid_ip):
             if any(updated[field] != current[field] for field in FIELDS):
                 updated["updated_at"] = datetime.now().isoformat()
                 conn.execute(f"""INSERT INTO {table}
-                    ({key}, department, room, responsible, updated_at) VALUES (?, ?, ?, ?, ?)
+                    ({key}, department, room, responsible, display_name, platform, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT({key}) DO UPDATE SET department=excluded.department,
-                        room=excluded.room, responsible=excluded.responsible, updated_at=excluded.updated_at
+                        room=excluded.room, responsible=excluded.responsible, display_name=excluded.display_name,
+                        platform=excluded.platform, updated_at=excluded.updated_at
                 """, (value, *(updated[field] for field in FIELDS), updated["updated_at"]))
                 description = (f"Cadastro atualizado — Setor: {updated['department'] or 'Não informado'}; "
                                f"Sala: {updated['room'] or 'Não informada'}; "
-                               f"Responsável: {updated['responsible'] or 'Não informado'}")
+                               f"Responsável: {updated['responsible'] or 'Não informado'}; "
+                               f"Nome cadastrado: {updated['display_name'] or 'Automático'}; "
+                               f"Sistema cadastrado: {updated['platform'] or 'Automático'}")
                 conn.execute("""INSERT INTO audit_events
                     (timestamp, category, ip, name, status, description, device_id)
                     VALUES (?, 'inventario', ?, ?, 'atualizado', ?, ?)""",

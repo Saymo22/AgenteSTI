@@ -42,7 +42,7 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(self.heartbeat().status_code,200)
         device_id=self.items()[0]['device_id']
         self.assertNotEqual(device_id,self.payload['agent_id'])
-        self.organization(device_id,department='TI',room='Sala 1',responsible='Ana')
+        self.organization(device_id,department='TI',room='Sala 1',responsible='Ana',display_name='PC da Ana',platform='Windows')
         previous=dict(server.devices[self.ip])
         for ip in ('10.2.117.33','10.2.118.33','10.2.119.33'):
             response=self.heartbeat({**self.payload,'mac_addresses':['02:AA:BB:CC:DD:EE']},ip)
@@ -53,6 +53,8 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(len(items),1)
         self.assertEqual(items[0]['ip'],'10.2.119.33')
         self.assertEqual(items[0]['organization']['responsible'],'Ana')
+        self.assertEqual(items[0]['organization']['display_name'],'PC da Ana')
+        self.assertEqual(items[0]['organization']['platform'],'Windows')
         self.assertEqual(items[0]['mac_addresses'],['02:AA:BB:CC:DD:EE'])
         history=self.client.get(f'/api/events?device_id={device_id}').json['events']
         self.assertEqual(sum(e['status']=='ip_alterado' for e in history),3)
@@ -65,11 +67,13 @@ class InventoryTests(unittest.TestCase):
         legacy={key:value for key,value in self.payload.items() if key not in
             ('agent_id','instance_id','hardware_key','serial_number','mac_addresses','manufacturer','model')}
         self.assertEqual(self.heartbeat(legacy).status_code,200)
-        self.organization(self.ip,department='Financeiro')
+        self.organization(self.ip,department='Financeiro',display_name='PC financeiro',platform='Windows')
         job=self.command().json['command_id']
         self.assertEqual(self.heartbeat().status_code,200)
         item=self.items()[0]
         self.assertEqual(item['organization']['department'],'Financeiro')
+        self.assertEqual(item['organization']['display_name'],'PC financeiro')
+        self.assertEqual(item['organization']['platform'],'Windows')
         self.assertEqual(server.get_command(job)['status'],'expired')
         self.assertEqual(self.heartbeat(legacy).status_code,409)
         with server.db_connect() as conn:
@@ -130,7 +134,7 @@ class InventoryTests(unittest.TestCase):
     def test_reinstallation_recovery_is_explicit_and_preserves_previous_inventory(self):
         self.heartbeat()
         target=self.items()[0]['device_id']
-        self.organization(target,department='RH',room='101',responsible='Ana')
+        self.organization(target,department='RH',room='101',responsible='Ana',display_name='RH da Ana',platform='Windows')
         self.age(target)
         replacement={**self.payload,'agent_id':str(uuid.uuid4()),'instance_id':str(uuid.uuid4()),'name':'REINSTALADO'}
         source=self.heartbeat(replacement,'10.2.117.44').json['device_id']
@@ -144,6 +148,8 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(response.status_code,200,response.json)
         self.assertEqual(len(self.items()),1)
         self.assertEqual(self.items()[0]['organization']['responsible'],'Ana')
+        self.assertEqual(self.items()[0]['organization']['display_name'],'RH da Ana')
+        self.assertEqual(self.items()[0]['organization']['platform'],'Windows')
         self.assertEqual(self.items()[0]['device_id'],target)
         self.assertEqual(self.heartbeat(replacement,'10.2.117.44').json['device_id'],target)
         self.assertEqual(self.heartbeat().status_code,409)  # UUID anterior não volta a tomar posse do cadastro.

@@ -300,13 +300,13 @@
 .legend-pill .sti-icon { width: 13px; height: 13px; }
 .online-dot { background: #48e5ae; }
 .offline-dot { background: #ee819d; }
-.organization-filters select,.organization-fields input {
+.organization-filters select,.organization-fields :is(input,select) {
   border-color: #97b6df26;
   border-radius: 10px;
   background: #0c1b2d;
   transition: border-color .2s,box-shadow .2s;
 }
-.organization-filters select:focus,.organization-fields input:focus {
+.organization-filters select:focus,.organization-fields :is(input,select):focus {
   border-color: #81e6c478;
   outline: 0;
   box-shadow: 0 0 0 3px #65eeb509;
@@ -691,3 +691,17 @@ button:focus-visible,a:focus-visible,[role="button"]:focus-visible { outline: 2p
 @media(prefers-reduced-motion:reduce) {
   *,*::before,*::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* Identificação de plataforma com origem explícita. */
+.device-platform-tag { display:flex; align-items:center; flex-wrap:wrap; gap:6px 10px; margin:14px 0 0; padding:10px 12px; border:1px solid #91b1d526; border-radius:12px; background:#83b7ef09; }
+.device-platform-tag strong { font-size:.82rem; color:#e0efff; }
+.device-platform-tag span { font-size:.67rem; color:#a5b9d1; }
+.device-platform-tag.agent { border-color:#59dfac40; background:#59dfac09; }
+.device-platform-tag.manual { border-color:#6eacff50; background:#6eacff0c; }
+.device-platform-tag.dns { border-color:#edbd6c50; background:#edbd6c0b; }
+.device-platform-tag.dns span { color:#edc588; }
+.device-os.os-ios,.modal-os.os-ios { color:#c3b1ff; background:#a58aff16; }
+.device-os.os-printer,.modal-os.os-printer { color:#7de3dc; }
+.device-os.os-network,.modal-os.os-network { color:#8caeff; }
+.device-os.os-unk,.modal-os.os-unk { color:#9eb6d0; }
+.device-classification-help { color:#a5b9d1; font-size:.75rem; line-height:1.6; }

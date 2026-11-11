@@ -99,6 +99,45 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(response.json['organization']['responsible'], 'Maria Silva')
         self.assertTrue(response.json['organization']['updated_at'])
 
+    def test_manual_identification_persists_without_overwriting_agent_telemetry(self):
+        self.heartbeat()
+        response = self.organization({'display_name': '  Celular da recepção  ', 'platform': 'Android'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['organization']['display_name'], 'Celular da recepção')
+        self.heartbeat({**self.payload, 'organization': {'platform': 'Outro'}})
+        server.devices.clear()
+        server.load_devices()
+        item = self.client.get('/api/devices').json['devices'][0]
+        self.assertEqual(item['organization']['platform'], 'Android')
+        self.assertEqual(item['os'], self.payload['os'])
+        response = self.organization({'platform': ''})
+        self.assertEqual(response.json['organization']['platform'], '')
+        self.assertEqual(response.json['organization']['display_name'], 'Celular da recepção')
+
+    def test_manual_platform_is_an_allowlist_and_name_is_validated(self):
+        self.heartbeat()
+        for platform in ('Windows', 'Linux', 'Android', 'iOS', 'macOS', 'Impressora', 'Equipamento de rede', 'Outro', ''):
+            self.assertEqual(self.organization({'platform': platform}).status_code, 200)
+        for data in ({'platform': 'BIOS'}, {'platform': '<script>'}, {'platform': 4},
+                     {'display_name': 'x'*121}, {'display_name': 'linha\n2'}):
+            self.assertEqual(self.organization(data).status_code, 400)
+
+    def test_existing_organization_tables_gain_profile_fields_without_losing_values(self):
+        with server.db_connect() as conn:
+            for table, key, identifier in (('device_organization', 'ip', self.ip),
+                                           ('machine_organization', 'device_id', 'legacy-device')):
+                conn.execute(f'DROP TABLE {table}')
+                conn.execute(f'''CREATE TABLE {table} ({key} TEXT PRIMARY KEY, department TEXT,
+                    room TEXT, responsible TEXT, updated_at TEXT)''')
+                conn.execute(f'INSERT INTO {table} VALUES (?,?,?,?,?)', (identifier, 'TI', '101', 'Ana', 'old'))
+        server.init_db()
+        server.init_db()
+        values = server.organizacao.load_organizations(server.db_connect)
+        for key in (self.ip, 'legacy-device'):
+            self.assertEqual(values[key]['department'], 'TI')
+            self.assertEqual(values[key]['display_name'], '')
+            self.assertEqual(values[key]['platform'], '')
+
     def test_organization_survives_agent_scanner_and_restart(self):
         self.heartbeat()
         self.organization({'department':'TI', 'room':'204', 'responsible':'João'})

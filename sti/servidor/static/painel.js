@@ -162,15 +162,17 @@ function init() {
       document.getElementById('btnDeviceHistory').addEventListener('click', loadDeviceHistory);
       document.getElementById('btnReconcileIdentity').addEventListener('click', reconcileIdentity);
       document.getElementById('organizationForm').addEventListener('submit', saveOrganization);
-      for (const field of ORGANIZATION_FIELDS) {
+      for (const field of DEVICE_PROFILE_FIELDS) {
         document.getElementById(ORGANIZATION_INPUTS[field]).addEventListener('input', () => {
           state.organizationEditor.dirty = true;
           document.getElementById('organizationSaveStatus').textContent = 'Alterações não salvas';
         });
-        document.getElementById(ORGANIZATION_FILTERS[field]).addEventListener('change', event => {
-          state.organizationFilters[field] = event.target.value;
-          renderAll();
-        });
+        if (ORGANIZATION_FILTERS[field]) {
+          document.getElementById(ORGANIZATION_FILTERS[field]).addEventListener('change', event => {
+            state.organizationFilters[field] = event.target.value;
+            renderAll();
+          });
+        }
       }
       document.getElementById('organizationGroupBy').addEventListener('change', event => {
         state.groupBy = ORGANIZATION_FIELDS.includes(event.target.value) ? event.target.value : '';
@@ -576,7 +578,7 @@ function renderLogs() {
       ));
       if (state.search) {
         devices = devices.filter(d => {
-          const searchable = `${d.name || ''} ${d.ip || ''} ${d.user || ''} ${d.os || ''} ${d.device_id || ''} ${d.agent_id || ''} ${d.serial_number || ''} ${d.manufacturer || ''} ${d.model || ''} ${(d.mac_addresses || []).join(' ')} ${ORGANIZATION_FIELDS.map(field => d.organization?.[field] || '').join(' ')}`;
+          const searchable = `${getDevicePlatform(d).name} ${d.organization?.display_name || ''} ${d.name || ''} ${d.ip || ''} ${d.user || ''} ${d.os || ''} ${d.device_id || ''} ${d.agent_id || ''} ${d.serial_number || ''} ${d.manufacturer || ''} ${d.model || ''} ${(d.mac_addresses || []).join(' ')} ${ORGANIZATION_FIELDS.map(field => d.organization?.[field] || '').join(' ')}`;
           return normalizeSearch(searchable).includes(normalizeSearch(state.search));
         });
       }
@@ -594,9 +596,34 @@ function renderLogs() {
       const os = String(osString);
       if (/windows/i.test(os)) return { cls: 'os-win', name: 'Windows', icon: icons.win };
       if (/android/i.test(os)) return { cls: 'os-android', name: 'Android', icon: icons.android };
-      if (/linux/i.test(os)) return { cls: 'os-linux', name: 'Linux', icon: icons.linux };
-      if (/apple|mac|ios/i.test(os)) return { cls: 'os-apple', name: 'Apple', icon: icons.apple };
-      return { cls: 'os-unk', name: os || 'Desconhecido', icon: icons.unknown };
+      if (/\bios\b|\bipados\b|iphone|ipad/i.test(os)) return { cls: 'os-ios', name: 'iOS', icon: icons.apple };
+      if (/\blinux\b|\bubuntu\b|\bdebian\b|\bfedora\b/i.test(os)) return { cls: 'os-linux', name: 'Linux', icon: icons.linux };
+      if (/\bapple\b|\bmacos\b|mac os|macbook|\bimac\b|\bdarwin\b/i.test(os)) return { cls: 'os-apple', name: 'macOS', icon: icons.apple };
+      if (os === 'Impressora') return { cls: 'os-printer', name: os, icon: uiIcon('printer') };
+      if (os === 'Equipamento de rede') return { cls: 'os-network', name: os, icon: uiIcon('network') };
+      if (os === 'Outro') return { cls: 'os-other', name: os, icon: uiIcon('monitor') };
+      return { cls: 'os-unk', name: 'Não identificado', icon: uiIcon('network') };
+    }
+
+    function getDevicePlatform(device) {
+      const reported = getOSInfo(device.os);
+      if (reported.cls !== 'os-unk') {
+        const agent = device.identification_source === 'agent' || device.agent_version || device.agent_online;
+        return {...reported, detail: device.os, source: agent ? 'agent' : 'inventory', label: agent ? 'Informado pelo agente' : 'Informado no inventário'};
+      }
+      const manual = getOSInfo(device.organization?.platform);
+      if (manual.cls !== 'os-unk') return {...manual, detail: manual.name, source: 'manual', label: 'Cadastrado por você'};
+      // Somente palavras explícitas do nome de rede; fabricante, IP e ping não comprovam o sistema.
+      const name = String(device.name || '').split('.')[0];
+      const hints = [
+        [/\b(?:iphone|ipad)(?:\b|[-_])/i, 'iOS'], [/\bandroid(?:\b|[-_])/i, 'Android'],
+        [/\b(?:macbook|imac|mac-mini)(?:\b|[-_])/i, 'macOS'],
+        [/\b(?:ubuntu|debian|fedora|linux)(?:\b|[-_])/i, 'Linux'],
+        [/\b(?:windows|win10|win11)(?:\b|[-_])/i, 'Windows']
+      ];
+      const hint = hints.find(([pattern]) => pattern.test(name));
+      if (hint) return {...getOSInfo(hint[1]), detail: hint[1] + ' · provável', source: 'dns', label: 'Provável pelo nome · confirme'};
+      return {...reported, detail: 'Sistema não identificado', source: 'unknown', label: 'Cadastre o sistema nos detalhes'};
     }
 
     function renderDevices() {
@@ -618,26 +645,27 @@ function renderLogs() {
     }
 
     function createDeviceCard(device) {
-      const os = getOSInfo(device.os);
+      const os = getDevicePlatform(device);
       const status = getStatus(device);
       const identity = getDeviceIdentity(device);
       return `
-        <article class="device-card ${status.cls}" data-ip="${escapeHtml(device.ip)}" data-reference="${escapeHtml(deviceKey(device))}" tabindex="0" role="button" aria-label="Gerenciar ${escapeHtml(device.name || device.ip)}">
+        <article class="device-card ${status.cls}" data-ip="${escapeHtml(device.ip)}" data-reference="${escapeHtml(deviceKey(device))}" tabindex="0" role="button" aria-label="Gerenciar ${escapeHtml(identity.name)}">
           <div class="device-head">
             <div style="display:flex;gap:14px;min-width:0;">
-              <div class="device-os ${os.cls}">${os.icon}</div>
+              <div class="device-os ${os.cls}" title="${escapeHtml(os.name + ' · ' + os.label)}" aria-label="${escapeHtml(os.name)}">${os.icon}</div>
               <div class="device-title" style="min-width:0;">
-                <strong title="${escapeHtml(device.name || device.ip)}">${escapeHtml(identity.name)}</strong>
+                <strong title="${escapeHtml(identity.name)}">${escapeHtml(identity.name)}</strong>
                 <span class="identity-source">${escapeHtml(identity.sourceLabel)}</span>
               </div>
             </div>
             <span class="status-badge ${status.cls}"><i></i>${status.text}</span>
           </div>
           <div class="device-address">${icons.ip}<span>${escapeHtml(device.ip)}</span><small>${device.address_active === false ? 'Último IP' : 'IPv4'}</small></div>
-          <div class="device-identity-tag">${uiIcon('shield')} ${device.device_id ? `Identidade permanente · ${escapeHtml(device.device_id.slice(0,8))}` : 'Identificação por IP · atualize o agente'}</div>
+          <div class="device-platform-tag ${os.source}"><strong>${escapeHtml(os.name)}</strong><span>${escapeHtml(os.label)}</span></div>
+          <div class="device-identity-tag">${uiIcon('shield')} ${device.device_id ? `Identidade permanente · ${escapeHtml(device.device_id.slice(0,8))}` : 'Cadastro por IP · confira se o endereço mudar'}</div>
           <div class="device-info">
             <div class="info-row">
-              <div class="info-head">${icons.chip}<span>Sistema operacional</span></div>
+              <div class="info-head">${icons.chip}<span>Sistema / tipo</span></div>
               <div class="info-value ${identity.osKnown ? '' : 'data-missing'}">${escapeHtml(identity.os)}</div>
             </div>
             <div class="info-row">
@@ -658,7 +686,7 @@ function renderLogs() {
           </dl>
           <div class="device-footer">
             <span class="device-seen">${escapeHtml(timeAgo(device.seconds_ago))}</span>
-            <span class="device-open">Ver detalhes ${uiIcon('arrow')}</span>
+            <span class="device-open">${os.source === 'unknown' ? 'Identificar dispositivo' : 'Ver detalhes'} ${uiIcon('arrow')}</span>
           </div>
         </article>
       `;
@@ -678,21 +706,22 @@ function renderLogs() {
       const source = device.identification_source || (device.agent_version || device.agent_online ? 'agent' : provisional ? 'network' : 'dns');
       const placeholder = !device.name || device.name === device.ip || (source !== 'agent' && provisional);
       const known = value => Boolean(value && !/^(desconhecido|não informado|unknown|none|n\/a)$/i.test(String(value).trim()));
-      const osKnown = known(device.os);
+      const platform = getDevicePlatform(device);
+      const osKnown = platform.source !== 'unknown';
       const userKnown = known(device.user);
       const latencyKnown = device.latency != null && device.latency !== '' && Number.isFinite(Number(device.latency)) && Number(device.latency) >= 0;
       return {
         source, osKnown, userKnown,
-        name: placeholder ? 'Dispositivo sem nome' : device.name,
-        sourceLabel: source === 'agent' ? 'Identificado pelo agente' : source === 'dns' ? 'Nome da rede · DNS' : source === 'saved' ? 'Nome salvo no inventário' : 'Identificação pendente',
-        os: osKnown ? device.os : 'Aguardando agente',
+        name: device.organization?.display_name || (placeholder ? 'Dispositivo sem nome' : device.name),
+        sourceLabel: device.organization?.display_name ? 'Nome cadastrado por você' : source === 'agent' ? 'Identificado pelo agente' : source === 'dns' ? 'Nome da rede · DNS' : source === 'saved' ? 'Nome salvo no inventário' : 'Identificação pendente',
+        os: platform.detail,
         user: userKnown ? device.user : device.agent_online ? 'Nenhuma sessão informada' : 'Aguardando agente',
         agent: device.agent_online ? 'Conectado' : source === 'agent' ? 'Sem comunicação' : 'Não identificado',
         latency: !device.online ? 'Sem resposta' : latencyKnown ? `${Number(device.latency).toLocaleString('pt-BR', {maximumFractionDigits: 1})} ms` : 'Não medida',
         latencyClass: !device.online ? 'offline' : !latencyKnown ? 'data-missing' : Number(device.latency) > 100 ? 'warn' : 'good',
         notice: device.agent_online ? 'Agente conectado. Sistema, usuário e recursos foram informados pela máquina.' : source === 'agent'
           ? 'O agente não enviou dados recentes. Sistema e usuário abaixo são do último envio; os recursos atuais estão indisponíveis.'
-          : 'Equipamento detectado na rede. O DNS pode informar o nome; sistema, usuário e recursos precisam do agente STI em execução com o servidor e o token corretos.'
+          : 'Equipamento detectado na rede. O IP e o ping não revelam o sistema operacional. Cadastre nome e sistema abaixo; sugestões pelo DNS são prováveis. Usuário e recursos precisam de um agente compatível.'
       };
     }
 
@@ -746,13 +775,13 @@ function renderLogs() {
             <div class="map-group-head"><h3>${title}</h3><span>${devices.length} dispositivos</span></div>
             <div class="map-device-list">
               ${devices.slice(0, 8).map(d => {
-                const os = getOSInfo(d.os);
+                const os = getDevicePlatform(d);
                 const status = getStatus(d);
                 return `
                   <div class="map-device-row">
                     <div class="device-os ${os.cls}" style="width:42px;height:42px;border-radius:14px;">${os.icon}</div>
                     <div style="min-width:0;">
-                      <div style="font-weight:800;">${escapeHtml(d.name || 'Dispositivo')}</div>
+                      <div style="font-weight:800;">${escapeHtml(getDeviceIdentity(d).name)}</div>
                       <div class="mono">${escapeHtml(d.ip || '--')}</div>
                     </div>
                     <span class="status-badge ${status.cls}">${status.label}</span>
@@ -784,23 +813,25 @@ function renderLogs() {
         editor.ip = deviceKey(device);
         editor.dirty = false;
         editor.revision = device.organization?.updated_at || '';
-        for (const field of ORGANIZATION_FIELDS) {
+        for (const field of DEVICE_PROFILE_FIELDS) {
           document.getElementById(ORGANIZATION_INPUTS[field]).value = device.organization?.[field] || '';
         }
         document.getElementById('organizationSaveStatus').textContent = '';
       }
-      const os = getOSInfo(device.os);
+      const os = getDevicePlatform(device);
       const status = getStatus(device);
       const hw = device.agent_online ? (device.hw || {}) : {};
       const identity = getDeviceIdentity(device);
 
       document.getElementById('modalOs').innerHTML = os.icon;
       document.getElementById('modalOs').className = `modal-os ${os.cls}`;
+      document.getElementById('modalOs').title = `${os.name} · ${os.label}`;
       document.getElementById('modalName').textContent = identity.name;
       document.getElementById('modalSub').textContent = `${device.ip || '--'} • ${identity.sourceLabel}`;
       document.getElementById('modalDeviceField').textContent = identity.name;
       document.getElementById('modalIpField').textContent = `${device.ip || '--'}${device.address_active === false ? ' (último IP; sem vínculo atual)' : ''}`;
       document.getElementById('modalSystemField').textContent = identity.os;
+      document.getElementById('modalSystemField').title = os.label;
       document.getElementById('modalUserField').textContent = identity.user;
       document.getElementById('modalStatusField').textContent = status.text;
       document.getElementById('modalLatencyField').textContent = identity.latency;
@@ -1100,8 +1131,8 @@ function renderLogs() {
       const header = ['IP','Dispositivo','Sistema','Status','Usuário','Latência(ms)','Setor','Sala','Responsável','ID equipamento','UUID instalação','Número de série','MACs','Fabricante','Modelo','Vínculo IP'];
       const rows = devices.map(d => [
         d.ip || '',
-        d.name || '',
-        d.os || '',
+        getDeviceIdentity(d).name,
+        getDevicePlatform(d).detail + ' (' + getDevicePlatform(d).label + ')',
         d.online ? 'Online' : 'Offline',
         d.user || '',
         d.online && d.latency != null ? d.latency : '',
@@ -1478,8 +1509,9 @@ function initNotifications() {
     }
 
     const ORGANIZATION_FIELDS = ['department', 'room', 'responsible'];
+    const DEVICE_PROFILE_FIELDS = [...ORGANIZATION_FIELDS, 'display_name', 'platform'];
     const ORGANIZATION_LABELS = { department: 'Setor', room: 'Sala', responsible: 'Responsável' };
-    const ORGANIZATION_INPUTS = { department: 'organizationDepartment', room: 'organizationRoom', responsible: 'organizationResponsible' };
+    const ORGANIZATION_INPUTS = { department: 'organizationDepartment', room: 'organizationRoom', responsible: 'organizationResponsible', display_name: 'organizationDisplayName', platform: 'organizationPlatform' };
     const ORGANIZATION_FILTERS = { department: 'filterDepartment', room: 'filterRoom', responsible: 'filterResponsible' };
 
     function normalizeSearch(value) {
@@ -1523,7 +1555,7 @@ function initNotifications() {
       if (!editor.ip || editor.saving) return;
       const ip = editor.ip;
       const payload = { expected_updated_at: editor.revision };
-      for (const field of ORGANIZATION_FIELDS) payload[field] = document.getElementById(ORGANIZATION_INPUTS[field]).value;
+      for (const field of DEVICE_PROFILE_FIELDS) payload[field] = document.getElementById(ORGANIZATION_INPUTS[field]).value;
       const status = document.getElementById('organizationSaveStatus');
       editor.saving = true;
       document.getElementById('organizationFieldset').disabled = true;
@@ -1537,11 +1569,11 @@ function initNotifications() {
         if (device) device.organization = data.organization;
         editor.revision = data.organization.updated_at;
         editor.dirty = false;
-        for (const field of ORGANIZATION_FIELDS) document.getElementById(ORGANIZATION_INPUTS[field]).value = data.organization[field];
+        for (const field of DEVICE_PROFILE_FIELDS) document.getElementById(ORGANIZATION_INPUTS[field]).value = data.organization[field] || '';
         updateOrganizationFilters();
         renderAll();
         status.textContent = 'Cadastro salvo';
-        showToast('Setor, sala e responsável salvos.');
+        showToast('Identificação e cadastro salvos.');
         loadEvents();
       } catch (error) {
         status.textContent = error.message;
