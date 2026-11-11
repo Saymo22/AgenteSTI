@@ -1,4 +1,4 @@
-# STI Command Center — V3.4
+# STI Command Center — V3.4.2
 
 Monitoramento e gerenciamento de máquinas Windows, com servidor Flask/Waitress, banco SQLite e agente para os computadores dos usuários.
 
@@ -145,18 +145,24 @@ O agente pode rodar a partir de `agente.py` com as dependências instaladas, ou 
 .\.venv\Scripts\python.exe agente.py
 ```
 
-Para distribuir, use **`STI_Agente_Setup_3.4.0.exe`**, importe `agent-config.json`, confira o servidor e instale. Não é necessário instalar Python na estação. O instalador também permite preencher servidor, porta, token e HTTPS diretamente.
+Para distribuir, use **`STI_Agente_Setup_3.4.2.exe`**, importe `agent-config.json`, confira o servidor e instale. Não é necessário instalar Python na estação. O instalador também permite preencher servidor, porta, token e HTTPS diretamente.
 
 A instalação fica em **`%LOCALAPPDATA%\STI\Agent`**, na conta que executa o instalador. Por padrão, registra a inicialização no login dessa conta e uma entrada em **Aplicativos instalados** do Windows. O agente funciona na sessão do usuário, preservando as mensagens no desktop; não é um serviço de sistema. Os dados de usuário priorizam uma sessão Windows ativa e usam o usuário do processo como fallback.
 
-Agentes V3.3 e anteriores precisam receber este instalador **uma vez** para habilitar a atualização automática. Execute-o na mesma conta usada pelo agente atual, importe sua configuração e preserve o arquivo de identidade. O instalador encerra executáveis legados conhecidos dessa conta. Remova tarefas, atalhos ou outros mecanismos manuais de inicialização do executável antigo para que ele não volte no próximo login.
+Agentes V3.3 e anteriores precisam receber este instalador **uma vez** para habilitar a atualização automática. Execute-o na mesma conta usada pelo agente atual, importe sua configuração e preserve o arquivo de identidade. Feche manualmente o agente portátil antigo antes de instalar: o instalador recusa encerrá-lo apenas pelo nome do arquivo. Somente processos da instalação de destino e da mesma conta podem ser encerrados automaticamente. Remova tarefas, atalhos ou outros mecanismos manuais de inicialização do executável antigo para que ele não volte no próximo login.
 
 O instalador preserva configurações existentes e o UUID; permite atualização manual e recusa uma versão inferior à instalada. A desinstalação remove executáveis e registros de inicialização, preservando configuração, identidade, logs e diário de comandos.
+
+Desde a V3.4.2, o Setup espera até 45 segundos por uma confirmação local com identificador único e versão, emitida após preparar configuração, identidade e diário de comandos. Se o processo encerrar ou não confirmar no prazo, informa falha em vez de anunciar sucesso. Essa confirmação verifica a inicialização local; a conexão ao servidor deve ser conferida no painel. Com `--no-launch`, os arquivos são instalados sem iniciar ou confirmar o agente.
+
+As etapas e falhas ficam em `%LOCALAPPDATA%\STI\logs\instalador.log`, com rotação, sem gravar token nem conteúdo da configuração. Se o Endpoint interromper o Setup, o último registro ajuda a localizar a etapa; consulte também os eventos do antivírus. A instalação não altera a proteção do Endpoint. Não há validação desta versão no Kaspersky da empresa nem garantia de eliminação do alerta.
+
+Telemetria e confirmação de comandos recusam redirecionamentos HTTP, assim como os downloads, evitando encaminhar `X-Agent-Token` para outro destino. Configure o endereço final do servidor. HTTP continua disponível para compatibilidade com a rede existente; use HTTPS configurado no servidor para proteger o conteúdo em trânsito.
 
 Para instalação sem interface, com configuração já preparada:
 
 ```powershell
-.\STI_Agente_Setup_3.4.0.exe --silent --config .\agent-config.json
+.\STI_Agente_Setup_3.4.2.exe --silent --config .\agent-config.json
 ```
 
 As opções `--no-startup` e `--no-launch` desabilitam, respectivamente, o início no login e a execução ao terminar a instalação. A instalação silenciosa também é por usuário: executá-la como outra conta instala para essa outra conta.
@@ -218,12 +224,12 @@ O build gera:
 | Arquivo | Uso |
 | --- | --- |
 | `dist/STI_Agente.exe` | Executável portátil; não habilita atualização automática sem instalação. |
-| `dist/releases/3.4.0/STI_Agente_Setup_3.4.0.exe` | Instalação inicial nas estações, sem Python. |
-| `dist/releases/3.4.0/STI_Release_3.4.0.sti` | Pacote assinado para importar no painel STI. |
-| `dist/releases/3.4.0/manifest.json` | Versão, notas, hashes e assinatura. |
-| `dist/releases/3.4.0/agent.zip` | Executável empacotado para download pelos agentes. |
+| `dist/releases/3.4.2/STI_Agente_Setup_3.4.2.exe` | Instalação inicial nas estações, sem Python. |
+| `dist/releases/3.4.2/STI_Release_3.4.2.sti` | Pacote assinado para importar no painel STI. |
+| `dist/releases/3.4.2/manifest.json` | Versão, notas, hashes e assinatura. |
+| `dist/releases/3.4.2/agent.zip` | Executável empacotado para download pelos agentes. |
 
-O executável mantém o nome `STI_Agente.exe` entre versões; a versão é definida em `sti/comum/versao.py`. Para gerar a próxima correção, por exemplo `3.4.1`:
+O executável mantém o nome `STI_Agente.exe` entre versões; a versão é definida em `sti/comum/versao.py`. Para gerar a próxima correção, por exemplo `3.4.3`:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/gerar_release.py --bump patch --notes "Descrição das correções desta versão."
@@ -236,7 +242,7 @@ Os builds são sem console. Para diagnóstico com saída visível, execute o fon
 ### Distribuir pelo servidor STI
 
 1. Atualize primeiro o servidor, instale as dependências atualizadas (`pip install -r requirements.txt`) e reinicie-o. O upload usa Flask 3.1; a migração do banco é aditiva.
-2. Entre no painel e abra **Atualizações**. Importe `STI_Release_3.4.0.sti`; importar não inicia a distribuição.
+2. Entre no painel e abra **Atualizações**. Importe `STI_Release_3.4.2.sti`; importar não inicia a distribuição.
 3. Baixe o instalador pela lista de versões ou use o arquivo local e instale uma vez nas estações com agente antigo. Máquinas descobertas apenas por ping não podem receber instalação remota por este mecanismo.
 4. Nas próximas releases, selecione a versão e comece com **Grupo piloto**, escolhendo equipamentos pelo ID permanente. Depois de conferir o resultado, libere para **Todos os agentes**.
 5. Opcionalmente, defina início e fim da janela de horário. O painel mostra o horário do servidor; uma janela como `22:00–06:00` atravessa a meia-noite. Sem janela, a oferta pode ocorrer a qualquer horário.
@@ -389,6 +395,8 @@ node --test tests/test_painel.cjs
 Os testes usam bancos temporários e não executam ações de energia. Foram validados: autenticação, isolamento por IP, faixas originais, métricas, migração do banco, concorrência da fila, transições, expiração, perda de confirmações, recuperação após reinício, CSV, histórico e escape de HTML. O cadastro tem testes de persistência após heartbeat, scanner e reinício, edição parcial, conflitos, filtros, grupos e preservação de campos durante edição. Também houve coleta real de hardware no Windows e teste do painel no Edge headless, com dados fictícios e scanner desativado.
 
 O módulo de releases cobre assinatura e adulteração, autenticação, isolamento do download, versões imutáveis, grupos, janelas atravessando a meia-noite, preservação da instalação, confirmação de saúde, retomada após download interrompido e recuperação da versão anterior. Foi realizada uma atualização real entre executáveis Windows `3.4.0 → 3.4.1`, preservando UUID e configuração, seguida de uma release inválida para confirmar a recuperação. Esses testes usaram diretórios temporários, sem registrar inicialização no Windows nem alterar agentes de produção. No Edge, foram verificados upload do pacote real, grupo piloto, suspensão, download do instalador e layout entre 360 e 1600 px.
+
+Na V3.4.2, os testes adicionais verificam recusa de redirecionamentos 301/302/303/307/308 sem encaminhar token, encerramento limitado à instalação e conta corretas, fechamento manual de agentes portáteis, falha de inicialização sem falso sucesso e logs sem token. A gravação de JSON usa arquivo temporário exclusivo e repete a substituição por até três segundos em caso de bloqueio temporário do Windows. Também foram verificadas gravações concorrentes e instalação/reinstalação reais do executável V3.4.2 sem servidor disponível, preservando UUID e configuração.
 
 ## Publicação
 

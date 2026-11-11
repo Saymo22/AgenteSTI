@@ -231,7 +231,8 @@ class ReleaseTests(unittest.TestCase):
         self.install_fixture()
         _, envelope = self.bundle()
         offer = {'release': envelope, 'rollout_id': str(uuid.uuid4())}
-        with patch.object(atualizacao, 'installed_root', return_value=self.root), patch.object(atualizacao, 'pending_offer', offer), \
+        with patch.object(atualizacao, 'AGENT_VERSION', '3.4.0'), \
+             patch.object(atualizacao, 'installed_root', return_value=self.root), patch.object(atualizacao, 'pending_offer', offer), \
              patch.object(atualizacao, 'next_attempt', 0), patch.object(atualizacao, 'report_progress'), \
              patch.object(atualizacao, 'download_package', side_effect=fixtures.requests.ConnectionError('offline')) as download, \
              self.assertLogs('STI_AGENT', level='ERROR'):

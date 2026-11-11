@@ -527,8 +527,13 @@ def confirmar_comando(
             headers={
                 "X-Agent-Token": AGENT_TOKEN
             },
-            timeout=HTTP_TIMEOUT
+            timeout=HTTP_TIMEOUT,
+            allow_redirects=False
         )
+
+        if 300 <= response.status_code < 400:
+            logger.error("Redirecionamento recusado ao confirmar comando.")
+            return False
 
         if response.status_code in (404, 409):
             raise CommandClosed("Servidor encerrou ou expirou o comando; não será reexecutado.")
@@ -826,8 +831,13 @@ def comunicar_servidor(
             headers={
                 "X-Agent-Token": AGENT_TOKEN
             },
-            timeout=HTTP_TIMEOUT
+            timeout=HTTP_TIMEOUT,
+            allow_redirects=False
         )
+
+        if 300 <= response.status_code < 400:
+            logger.error("Redirecionamento recusado ao enviar telemetria.")
+            return False
 
         if response.status_code == 401:
 
@@ -1052,6 +1062,8 @@ def iniciar_agente():
         logger.exception("Não foi possível carregar a identidade persistente; verifique o arquivo e suas permissões.")
         return
     init_journal(agent_id)
+    from sti.agente.instalacao import acknowledge_installation
+    acknowledge_installation()
     diagnosticar_rede()
 
     with requests.Session() as session_http:
