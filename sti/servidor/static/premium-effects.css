@@ -474,6 +474,9 @@ body.modal-open { overflow: hidden !important; }
 .identity-recovery p,.identity-recovery label { color: #b5c8dc; font-size: .78rem; line-height: 1.7; margin: 10px 0; display: block; }
 .identity-recovery select { width: 100%; min-width: 0; padding: 12px; border-radius: 10px; border: 1px solid #8ab5de44; background: #0b1b2c; color: #e8f2ff; margin-bottom: 12px; }
 .device-history-section { margin: 0 0 22px; }
+.remap-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-color: #bd9f6244; color: #e6cfa7; }
+.remap-button .sti-icon { width: 17px; height: 17px; }
+.organization-filters .remap-status { grid-column: 1 / -1; padding: 11px 13px; border: 1px solid #80baff22; border-radius: 10px; background: #80baff08; color: #b8cfe4; font-size: .77rem; line-height: 1.6; }
 .sound-settings-panel { position: fixed; z-index: 350; width: min(360px,calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; padding: 21px; border: 1px solid #88b9e33d; border-radius: 22px; background: linear-gradient(145deg,#162d43,#0b1a2d); box-shadow: 0 24px 65px #0009; color: #e1edfa; }
 .sound-settings-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 18px; }
 .sound-settings-head h3 { display: flex; gap: 8px; align-items: center; margin-top: 5px; font-size: 1rem; }

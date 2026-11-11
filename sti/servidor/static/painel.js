@@ -150,6 +150,7 @@ function init() {
         setTimeout(() => ripple.remove(), 600);
       });
       document.getElementById('btnScan').addEventListener('click', scanNetwork);
+      document.getElementById('btnRemap').addEventListener('click', remapNetwork);
       document.getElementById('btnTv').addEventListener('click', toggleKiosk);
       document.getElementById('modalClose').addEventListener('click', closeModal);
       el.deviceModalOverlay.addEventListener('click', (e) => { if (e.target === el.deviceModalOverlay) closeModal(); });
@@ -596,7 +597,7 @@ function renderLogs() {
 
     function renderDevices() {
       const devices = getFilteredDevices();
-      document.getElementById('organizationResultCount').textContent = `${devices.length} de ${state.devices.length} máquinas • indicadores gerais consideram toda a rede`;
+      document.getElementById('organizationResultCount').textContent = `${devices.length} de ${state.devices.length} dispositivos • indicadores gerais consideram toda a rede`;
       if (!devices.length) {
         el.devicesGrid.innerHTML = `<div class="empty-state">Nenhum dispositivo encontrado para esse filtro.</div>`;
         return;
@@ -1053,6 +1054,31 @@ function renderLogs() {
       } catch (error) {
         button.disabled = false;
         showToast(error.message);
+      }
+    }
+
+    async function remapNetwork() {
+      if (state.remapSubmitting || state.scanRunning) return;
+      state.remapSubmitting = true;
+      const button = document.getElementById('btnRemap');
+      button.disabled = true;
+      try {
+        const previewResponse = await checkedFetch('/api/remap');
+        const preview = await previewResponse.json();
+        const message = `Remapear a rede ${preview.network}?\n\nSerão removidos ${preview.removed} registros de descoberta sem agente, incluindo ${preview.offline_removed} offline.\n${preview.kept} equipamentos que já enviaram dados pelo agente serão mantidos.\n\nOs cadastros de setor, sala e responsável e o histórico serão mantidos. Uma nova varredura será iniciada.`;
+        if (!confirm(message)) return;
+        const response = await checkedFetch('/api/remap', {
+          method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({confirm: true})
+        });
+        const data = await response.json();
+        updateScanState(data.scan || {});
+        showToast('Remapeamento solicitado. Acompanhe o resultado na seção Dispositivos.');
+        await loadDevices();
+      } catch (error) {
+        showToast(error.message);
+      } finally {
+        state.remapSubmitting = false;
+        button.disabled = Boolean(state.scanRunning);
       }
     }
 
@@ -1620,12 +1646,36 @@ function initNotifications() {
 
     function updateScanState(scan) {
       const button = document.getElementById('btnScan');
+      const remapButton = document.getElementById('btnRemap');
       if (!state.scanMarkup) state.scanMarkup = button.innerHTML;
+      if (!state.remapMarkup) state.remapMarkup = remapButton.innerHTML;
       const scanning = scan.scanning === true;
+      state.scanRunning = scanning;
       button.disabled = scanning;
+      remapButton.disabled = scanning || Boolean(state.remapSubmitting);
+      remapButton.innerHTML = scan.remapping ? `${uiIcon('refresh')} Remapeando…` : state.remapMarkup;
       button.classList.toggle('is-scanning', scanning);
       button.innerHTML = scanning ? `${uiIcon('scan')}<span>Escaneando…</span>` : state.scanMarkup;
       button.title = scanning ? `Verificando ${Number(scan.progress) || 0} de ${Number(scan.total) || 0} endereços` : 'Escanear rede';
+      if (scan.discovery_generation !== undefined) {
+        if (state.discoveryGeneration !== undefined && state.discoveryGeneration !== scan.discovery_generation) {
+          for (const device of state.devices) {
+            if (!device.device_id && device.identification_source !== 'agent' && !Object.keys(device.hw || {}).length) {
+              delete state.previousStatus[deviceKey(device)];
+            }
+          }
+        }
+        state.discoveryGeneration = scan.discovery_generation;
+      }
+      const feedback = document.getElementById('remapStatus');
+      const remap = scan.last_remap;
+      feedback.hidden = !remap;
+      if (remap) {
+        if (remap.status === 'completed') feedback.textContent = `Remapeamento concluído. ${remap.removed} registros sem agente removidos e nova varredura finalizada.`;
+        else if (remap.status === 'error') feedback.textContent = scan.error || 'Não foi possível concluir o remapeamento. Tente escanear novamente.';
+        else if (remap.status === 'queued') feedback.textContent = 'Preparando o remapeamento da rede…';
+        else feedback.textContent = `Remapeamento em andamento. ${remap.removed} registros sem agente removidos. Verificando ${scan.progress || 0} de ${scan.total || 0} endereços.`;
+      }
     }
 
     init();

@@ -136,7 +136,11 @@ scan_status = {
     "scanning": False,
     "last_scan": None,
     "progress": 0,
-    "total": 0
+    "total": 0,
+    "remapping": False,
+    "discovery_generation": 0,
+    "last_remap": None,
+    "error": None
 }
 
 
@@ -202,6 +206,10 @@ def identification_source(device):
         return device["name_source"]
     name = device.get("name", "")
     return "network" if not name or name == device.get("ip") or re.fullmatch(r"host-\d+", name) else "saved"
+
+
+def is_discovery_only(device):
+    return not (device.get('device_id') or device.get('hw') or identification_source(device) == 'agent')
 
 
 def apply_hostname(ip, hostname):
@@ -426,6 +434,8 @@ def audit(
 # ==========================================
 
 def write_device(conn, ip, device):
+    if is_discovery_only(device) and ip not in devices:
+        return False  # Uma resolução DNS pendente não recria registros removidos pelo remapeamento.
     device_id = device.get("device_id")
     binding = conn.execute("SELECT device_id FROM machine_inventory WHERE current_ip=?", (ip,)).fetchone()
     if device_id:
@@ -893,7 +903,49 @@ def scan_network():
 
         return False
 
+    return scan_network_locked()
+
+
+def discovery_remap_preview():
+    with lock, db_connect() as conn:
+        targets = {ip: device for ip, device in devices.items() if is_discovery_only(device)}
+        represented_ids = {device.get('device_id') for device in devices.values()}
+        archived = sum(row[0] not in represented_ids for row in conn.execute('SELECT device_id FROM machine_inventory'))
+        online = sum(get_device_online(device) for device in targets.values())
+        return {
+            'removed': len(targets),
+            'online_removed': online,
+            'offline_removed': len(targets) - online,
+            'kept': len(devices) - len(targets) + archived,
+            'network': str(NETWORK),
+        }
+
+
+def clear_discovery_devices():
+    with lock:
+        targets = [ip for ip, device in devices.items() if is_discovery_only(device)]
+        with db_connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            for ip in targets:
+                conn.execute("DELETE FROM device_state WHERE ip=? AND COALESCE(device_id,'')=''", (ip,))
+                inventario.expire_identity_commands(conn, ip)
+            conn.execute('''INSERT INTO audit_events (timestamp, category, status, description)
+                VALUES (?, 'scanner', 'remapeado', ?)''',
+                (agora(), f'Remapeamento da rede {NETWORK}: {len(targets)} registros sem agente removidos. Nova varredura iniciada.'))
+        for ip in targets:
+            devices.pop(ip, None)
+        hostname_resolver.forget(targets)
+        scan_status['discovery_generation'] += 1
+        return len(targets)
+
+
+def scan_network_locked(remap=False):
     try:
+
+        if remap:
+            removed = clear_discovery_devices()
+            with lock:
+                scan_status['last_remap'].update(removed=removed, status='scanning')
 
         hosts = [
             str(ip)
@@ -905,7 +957,8 @@ def scan_network():
             scan_status.update(
                 scanning=True,
                 progress=0,
-                total=len(hosts)
+                total=len(hosts),
+                error=None
             )
 
         found = {}
@@ -1036,9 +1089,18 @@ def scan_network():
 
         save_snapshot()
 
+        if remap:
+            with lock:
+                scan_status['last_remap'].update(status='completed', completed_at=agora())
+
         return True
 
     except Exception:
+
+        with lock:
+            scan_status['error'] = 'Não foi possível concluir a varredura. Tente escanear a rede novamente.'
+            if remap:
+                scan_status['last_remap']['status'] = 'error'
 
         logger.exception(
             "Erro durante o scanner."
@@ -1056,8 +1118,28 @@ def scan_network():
 
         with lock:
             scan_status["scanning"] = False
+            scan_status['remapping'] = False
 
         scan_lock.release()
+
+
+def start_network_scan(remap=False):
+    if not scan_lock.acquire(blocking=False):
+        return False
+    with lock:
+        scan_status.update(scanning=True, remapping=remap, progress=0, total=len(list(NETWORK.hosts())), error=None)
+        if remap:
+            scan_status['last_remap'] = {'id': str(uuid.uuid4()), 'status': 'queued', 'removed': 0, 'started_at': agora()}
+    try:
+        threading.Thread(target=scan_network_locked, kwargs={'remap': remap}, daemon=True, name='STI-network-scan').start()
+    except Exception:
+        with lock:
+            scan_status.update(scanning=False, remapping=False)
+            if remap:
+                scan_status['last_remap']['status'] = 'error'
+        scan_lock.release()
+        raise
+    return True
 
 
 def scanner_loop():
@@ -1701,17 +1783,18 @@ def api_get_command(job_id):
 @require_admin
 def api_scan():
 
-    if scan_lock.locked():
+    try:
+        started = start_network_scan()
+    except (RuntimeError, OSError):
+        logger.exception('Não foi possível iniciar o scanner.')
+        return jsonify(ok=False, error='Não foi possível iniciar a varredura. Tente novamente.'), 503
+
+    if not started:
 
         return jsonify({
             "ok": False,
             "error": "Scan já em andamento"
         }), 409
-
-    threading.Thread(
-        target=scan_network,
-        daemon=True
-    ).start()
 
     audit(
         "scanner",
@@ -1723,6 +1806,25 @@ def api_scan():
         "ok": True,
         "status": "iniciado"
     }), 202
+
+
+@app.route('/api/remap', methods=['GET', 'POST'])
+@require_admin
+def api_remap():
+    if request.method == 'GET':
+        return jsonify(ok=True, **discovery_remap_preview())
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or data.get('confirm') is not True:
+        return jsonify(ok=False, error='Confirme a limpeza dos registros sem agente.'), 400
+    try:
+        started = start_network_scan(remap=True)
+    except (RuntimeError, OSError):
+        logger.exception('Não foi possível iniciar o remapeamento.')
+        return jsonify(ok=False, error='Não foi possível iniciar o remapeamento. Tente novamente.'), 503
+    if not started:
+        return jsonify(ok=False, error='Aguarde a varredura atual terminar antes de remapear.'), 409
+    with lock:
+        return jsonify(ok=True, remap_id=scan_status['last_remap']['id'], scan=dict(scan_status)), 202
 
 
 # ==========================================

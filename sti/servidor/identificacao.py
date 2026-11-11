@@ -43,6 +43,12 @@ class HostnameResolver:
                     self.retry_at[ip] = time.monotonic() + self.ttl
                 self.pending.task_done()
 
+    def forget(self, ips):
+        with self.lock:
+            for ip in ips:
+                if self.retry_at.get(ip) != float('inf'):
+                    self.retry_at.pop(ip, None)
+
     def resolve(self, ip):
         try:
             hostname = socket.gethostbyaddr(ip)[0].rstrip(".")

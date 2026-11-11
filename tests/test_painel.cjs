@@ -352,9 +352,45 @@ test('indicador de escaneamento usa o estado real e restaura o botão', () => {
   const {run,nodes}=loadPanel();
   run(`document.getElementById('btnScan').innerHTML='Escanear rede';updateScanState({scanning:true,progress:20,total:100});`);
   assert.equal(nodes.get('btnScan').disabled,true);
+  assert.equal(nodes.get('btnRemap').disabled,true);
   assert.ok(nodes.get('btnScan').innerHTML.includes('Escaneando'));
   assert.ok(nodes.get('btnScan').title.includes('20 de 100'));
   run('updateScanState({scanning:false});');
   assert.equal(nodes.get('btnScan').disabled,false);
+  assert.equal(nodes.get('btnRemap').disabled,false);
   assert.equal(nodes.get('btnScan').innerHTML,'Escanear rede');
+});
+
+test('cancelar remapeamento mostra contagens e não envia pedido de limpeza', async () => {
+  const {run,nodes}=loadPanel();
+  run(`globalThis.requests=[];checkedFetch=async(url,options)=>{requests.push(options?.method || 'GET');return {json:async()=>({network:'10.2.116.0/22',removed:110,offline_removed:90,kept:20})}};
+       globalThis.confirmation='';globalThis.confirm=text=>{confirmation=text;return false};showToast=()=>{};`);
+  await run('remapNetwork()');
+  assert.equal(run('requests.length'),1);
+  assert.ok(run('confirmation').includes('110'));
+  assert.ok(run('confirmation').includes('20'));
+  assert.equal(nodes.get('btnRemap').disabled,false);
+});
+
+test('remapeamento confirmado envia escopo fixo e acompanha o estado do servidor', async () => {
+  const {run,nodes}=loadPanel();
+  run(`globalThis.payload=null;globalThis.confirm=()=>true;showToast=()=>{};loadDevices=async()=>{};
+       checkedFetch=async(url,options)=>({json:async()=>{if(options){payload=JSON.parse(options.body);return {scan:{scanning:true,remapping:true,last_remap:{id:'job',status:'queued',removed:0}}}}return {network:'10.2.116.0/22',removed:10,offline_removed:8,kept:5}}});`);
+  await run('remapNetwork()');
+  assert.equal(run('payload.confirm'),true);
+  assert.equal(nodes.get('btnRemap').disabled,true);
+  assert.ok(nodes.get('btnRemap').innerHTML.includes('Remapeando'));
+  run(`updateScanState({scanning:false,last_remap:{id:'job',status:'completed',removed:10}});`);
+  assert.equal(nodes.get('btnRemap').disabled,false);
+  assert.ok(nodes.get('remapStatus').textContent.includes('10 registros'));
+});
+
+test('remapeamento reinicia detecção dos IPs sem agente sem criar notificações falsas', () => {
+  const {run}=loadPanel();
+  run(`state.devices=[{ip:'10.2.116.1',online:false,identification_source:'dns',hw:{}},{device_id:'agente',ip:'10.2.116.2',online:true,identification_source:'agent'}];
+       state.previousStatus={'10.2.116.1':false,agente:true};state.notifications=[];addEventLog=()=>{};
+       updateScanState({discovery_generation:0});updateScanState({discovery_generation:1});
+       processStatusChanges([{ip:'10.2.116.1',online:true},{device_id:'agente',ip:'10.2.116.2',online:true}]);`);
+  assert.equal(run('state.notifications.length'),0);
+  assert.equal(run('state.previousStatus.agente'),true);
 });
