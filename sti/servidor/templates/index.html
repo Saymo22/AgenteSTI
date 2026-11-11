@@ -469,10 +469,17 @@
           <legend>Localização e responsável</legend>
           <p>Cadastro administrativo da máquina. O responsável pode ser diferente do usuário conectado.</p>
           <div class="organization-fields">
+            <label for="organizationDisplayName">Nome para identificar<input id="organizationDisplayName" name="display_name" maxlength="120" autocomplete="off" placeholder="Ex.: iPhone da recepção"></label>
+            <label for="organizationPlatform">Sistema ou tipo<select id="organizationPlatform" name="platform">
+              <option value="">Automático / não informado</option><option>Windows</option><option>Linux</option>
+              <option>Android</option><option>iOS</option><option>macOS</option><option>Impressora</option>
+              <option>Equipamento de rede</option><option>Outro</option>
+            </select></label>
             <label for="organizationDepartment">Setor<input id="organizationDepartment" name="department" maxlength="120" autocomplete="off" placeholder="Ex.: Financeiro"></label>
             <label for="organizationRoom">Sala<input id="organizationRoom" name="room" maxlength="120" autocomplete="off" placeholder="Ex.: Sala 204"></label>
             <label for="organizationResponsible">Responsável<input id="organizationResponsible" name="responsible" maxlength="120" autocomplete="off" placeholder="Ex.: Maria Silva"></label>
           </div>
+          <p class="device-classification-help">Sem agente, cadastre o sistema para identificar o ícone. Informações do agente têm prioridade; sugestões pelo nome DNS são prováveis. O IP sozinho não revela o sistema. Cadastros sem agente ficam vinculados ao IP e devem ser conferidos se ele mudar de equipamento.</p>
           <div class="organization-save-row">
             <button type="submit" class="tool-btn primary" id="saveOrganization">Salvar cadastro</button>
             <span id="organizationSaveStatus" role="status" aria-live="polite"></span>

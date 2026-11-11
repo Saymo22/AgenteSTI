@@ -406,3 +406,48 @@ test('controle de versões distingue versão atual, inicialização manual, grup
   assert.equal(run(`compareAgentVersions('3.10.0','3.9.0')`),1);
   assert.equal(run(`compareAgentVersions('legado','3.4.0')`),null);
 });
+
+
+test('plataformas distinguem iOS, macOS, Android e Linux sem confundir BIOS', () => {
+  const {run}=loadPanel();
+  for(const [text, expected] of [['iOS 18','iOS'],['iPadOS 18','iOS'],['macOS Sonoma','macOS'],['Linux Android 14','Android'],['Ubuntu 24','Linux'],['Windows 11','Windows']]) {
+    assert.equal(run('getOSInfo('+JSON.stringify(text)+').name'),expected);
+  }
+  assert.equal(run("getOSInfo('BIOS').cls"),'os-unk');
+});
+
+test('ícone usa agente antes do cadastro e identifica origem manual', () => {
+  const {run}=loadPanel();
+  assert.equal(run("getDevicePlatform({os:'Windows 11',agent_version:'3.4.2',organization:{platform:'Android'}}).name"),'Windows');
+  assert.equal(run("getDevicePlatform({os:'Desconhecido',organization:{platform:'iOS'}}).source"),'manual');
+  const html=run("createDeviceCard({ip:'10.2.116.20',organization:{platform:'Android',display_name:'Celular da recepção'}})");
+  assert.ok(html.includes('os-android'));assert.ok(html.includes('Cadastrado por você'));assert.ok(html.includes('Celular da recepção'));
+});
+
+test('nomes de rede geram sugestões prováveis e IP sozinho mantém sistema desconhecido', () => {
+  const {run}=loadPanel();
+  for(const [name, expected] of [['iPhone-de-Ana','iOS'],['android-abc','Android'],['debian-server','Linux'],['MacBook-da-Ana','macOS'],['windows-pc','Windows']]) {
+    assert.equal(run('getDevicePlatform({name:'+JSON.stringify(name)+'}).name'),expected);
+    assert.equal(run('getDevicePlatform({name:'+JSON.stringify(name)+'}).source'),'dns');
+  }
+  const unknown=run("getDevicePlatform({ip:'10.2.116.123',name:'host-123'})");
+  assert.equal(unknown.source,'unknown');assert.equal(unknown.name,'Não identificado');
+  assert.ok(!run("createDeviceCard({ip:'10.2.116.123'})").includes('r="10"></circle><path d="M9.1'));
+});
+
+test('nome cadastrado é escapado e participa da busca junto com o sistema', () => {
+  const {run}=loadPanel();
+  run("state.devices=[{ip:'10.2.116.1',organization:{display_name:'Celular Recepção',platform:'iOS'}}]");
+  for(const search of ['recepcao','ios']) {run('state.search='+JSON.stringify(search));assert.equal(run('getFilteredDevices().length'),1);}
+  const html=run("createDeviceCard({organization:{display_name:'<img src=x onerror=alert(1)>',platform:'Android'}})");
+  assert.ok(!html.includes('<img'));assert.ok(html.includes('&lt;img'));
+});
+
+test('cadastro de identificação preserva rascunho e envia nome e plataforma', async () => {
+  const {run,nodes}=loadPanel();
+  run("state.devices=[{ip:'10.2.116.9',organization:{display_name:'Antigo',platform:'Linux'}}];openModal('10.2.116.9');state.organizationEditor.dirty=true;document.getElementById('organizationDisplayName').value='Novo';document.getElementById('organizationPlatform').value='Android';openModal('10.2.116.9',true)");
+  assert.equal(nodes.get('organizationDisplayName').value,'Novo');assert.equal(nodes.get('organizationPlatform').value,'Android');
+  run("showToast=()=>{};renderAll=()=>{};loadEvents=()=>{};checkedFetch=async(url,options)=>{globalThis.profilePayload=JSON.parse(options.body);return {json:async()=>({organization:{...profilePayload,updated_at:'new'}})}}");
+  await run('saveOrganization({preventDefault(){}})');
+  assert.equal(run('profilePayload.platform'),'Android');assert.equal(run('profilePayload.display_name'),'Novo');
+});

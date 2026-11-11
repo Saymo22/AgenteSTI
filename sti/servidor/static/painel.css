@@ -1430,11 +1430,11 @@
 }
 .organization-filters { margin-bottom: 22px; align-items: end; }
 .organization-filters label, .organization-fields label { display: grid; gap: 8px; color: var(--muted); font-size: .85rem; min-width: 0; }
-.organization-filters select, .organization-fields input {
+.organization-filters select, .organization-fields :is(input,select) {
   width: 100%; min-width: 0; min-height: 44px; padding: 10px; border: 1px solid var(--stroke-strong);
   border-radius: 10px; background: var(--bg); color: var(--text); font: inherit; color-scheme: dark;
 }
-.organization-fields input:focus, .organization-filters select:focus { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.organization-fields :is(input,select):focus, .organization-filters select:focus { outline: 2px solid var(--cyan); outline-offset: 2px; }
 #organizationResultCount { grid-column: 1 / -1; color: var(--muted); font-size: .85rem; }
 .organization-form { margin: 0 0 22px; }
 .organization-form fieldset { padding: 18px; border: 1px solid var(--stroke-strong); border-radius: 18px; min-width: 0; }

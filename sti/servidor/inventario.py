@@ -60,6 +60,8 @@ def init_schema(conn):
     conn.execute("""CREATE TABLE IF NOT EXISTS machine_organization (
         device_id TEXT PRIMARY KEY, department TEXT NOT NULL DEFAULT '', room TEXT NOT NULL DEFAULT '',
         responsible TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL)""")
+    from sti.servidor.organizacao import migrate_identification
+    migrate_identification(conn, 'machine_organization')
     conn.execute("""CREATE TABLE IF NOT EXISTS identity_conflicts (
         agent_id TEXT NOT NULL, ip TEXT NOT NULL, hardware_key TEXT NOT NULL,
         description TEXT NOT NULL, last_seen TEXT NOT NULL,
@@ -127,7 +129,8 @@ def enroll(conn, ip, profile, threshold):
         record_event(conn, device_id, ip, "identificado", "Identidade permanente registrada pelo agente.")
     if adopt_legacy:
         conn.execute("""INSERT OR IGNORE INTO machine_organization
-            SELECT ?,department,room,responsible,updated_at FROM device_organization WHERE ip=?""", (device_id, ip))
+            (device_id,department,room,responsible,display_name,platform,updated_at)
+            SELECT ?,department,room,responsible,display_name,platform,updated_at FROM device_organization WHERE ip=?""", (device_id, ip))
         conn.execute("UPDATE audit_events SET device_id=? WHERE ip=? AND device_id IS NULL", (device_id, ip))
     conn.execute("DELETE FROM device_organization WHERE ip=?", (ip,))
     # Não herdar dados de outro ocupante do endereço atual.
@@ -196,7 +199,10 @@ def register_routes(app, require_admin, db_connect, devices, lock, threshold):
                 conn.execute('UPDATE retired_agent_ids SET device_id=? WHERE device_id=?',(target_id,source_id))
                 conn.execute('DELETE FROM device_state WHERE device_id=?',(target_id,))
                 conn.execute('UPDATE device_state SET device_id=? WHERE device_id=?',(target_id,source_id))
-                conn.execute('INSERT OR IGNORE INTO machine_organization SELECT ?,department,room,responsible,updated_at FROM machine_organization WHERE device_id=?',(target_id,source_id))
+                conn.execute('''INSERT OR IGNORE INTO machine_organization
+                    (device_id,department,room,responsible,display_name,platform,updated_at)
+                    SELECT ?,department,room,responsible,display_name,platform,updated_at
+                    FROM machine_organization WHERE device_id=?''',(target_id,source_id))
                 conn.execute('DELETE FROM machine_organization WHERE device_id=?',(source_id,))
                 conn.execute('UPDATE audit_events SET device_id=? WHERE device_id=?',(target_id,source_id))
                 conn.execute('DELETE FROM agent_update_state WHERE device_id=?', (target_id,))
