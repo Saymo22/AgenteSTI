@@ -1,4 +1,4 @@
-# STI Command Center — V3.4.2
+# STI Command Center — V3.4.3
 
 Monitoramento e gerenciamento de máquinas Windows, com servidor Flask/Waitress, banco SQLite e agente para os computadores dos usuários.
 
@@ -145,7 +145,7 @@ O agente pode rodar a partir de `agente.py` com as dependências instaladas, ou 
 .\.venv\Scripts\python.exe agente.py
 ```
 
-Para distribuir, use **`STI_Agente_Setup_3.4.2.exe`**, importe `agent-config.json`, confira o servidor e instale. Não é necessário instalar Python na estação. O instalador também permite preencher servidor, porta, token e HTTPS diretamente.
+Para distribuir, use **`STI_Agente_Setup_3.4.3.exe`**, importe `agent-config.json`, confira o servidor e instale. Não é necessário instalar Python na estação. O instalador também permite preencher servidor, porta, token e HTTPS diretamente.
 
 A instalação fica em **`%LOCALAPPDATA%\STI\Agent`**, na conta que executa o instalador. Por padrão, registra a inicialização no login dessa conta e uma entrada em **Aplicativos instalados** do Windows. O agente funciona na sessão do usuário, preservando as mensagens no desktop; não é um serviço de sistema. Os dados de usuário priorizam uma sessão Windows ativa e usam o usuário do processo como fallback.
 
@@ -162,7 +162,7 @@ Telemetria e confirmação de comandos recusam redirecionamentos HTTP, assim com
 Para instalação sem interface, com configuração já preparada:
 
 ```powershell
-.\STI_Agente_Setup_3.4.2.exe --silent --config .\agent-config.json
+.\STI_Agente_Setup_3.4.3.exe --silent --config .\agent-config.json
 ```
 
 As opções `--no-startup` e `--no-launch` desabilitam, respectivamente, o início no login e a execução ao terminar a instalação. A instalação silenciosa também é por usuário: executá-la como outra conta instala para essa outra conta.
@@ -224,12 +224,12 @@ O build gera:
 | Arquivo | Uso |
 | --- | --- |
 | `dist/STI_Agente.exe` | Executável portátil; não habilita atualização automática sem instalação. |
-| `dist/releases/3.4.2/STI_Agente_Setup_3.4.2.exe` | Instalação inicial nas estações, sem Python. |
-| `dist/releases/3.4.2/STI_Release_3.4.2.sti` | Pacote assinado para importar no painel STI. |
-| `dist/releases/3.4.2/manifest.json` | Versão, notas, hashes e assinatura. |
-| `dist/releases/3.4.2/agent.zip` | Executável empacotado para download pelos agentes. |
+| `dist/releases/3.4.3/STI_Agente_Setup_3.4.3.exe` | Instalação inicial nas estações, sem Python. |
+| `dist/releases/3.4.3/STI_Release_3.4.3.sti` | Pacote assinado para importar no painel STI. |
+| `dist/releases/3.4.3/manifest.json` | Versão, notas, hashes e assinatura. |
+| `dist/releases/3.4.3/agent.zip` | Executável empacotado para download pelos agentes. |
 
-O executável mantém o nome `STI_Agente.exe` entre versões; a versão é definida em `sti/comum/versao.py`. Para gerar a próxima correção, por exemplo `3.4.3`:
+O executável mantém o nome `STI_Agente.exe` entre versões; a versão é definida em `sti/comum/versao.py`. Para gerar a próxima correção, por exemplo `3.4.4`:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/gerar_release.py --bump patch --notes "Descrição das correções desta versão."
@@ -237,18 +237,34 @@ O executável mantém o nome `STI_Agente.exe` entre versões; a versão é defin
 
 Também são aceitos `--bump minor`, `--bump major` e `--notes-file arquivo.txt`. O incremento altera o fonte da versão; inclua essa alteração no próximo commit. Uma versão importada no servidor é imutável: alterações de código exigem outro número de versão. `dist/` e `build/` permanecem fora do Git.
 
-Os builds são sem console. Para diagnóstico com saída visível, execute o fonte pelo PyCharm. Configurações com credenciais não são embutidas. A assinatura Ed25519 protege o mecanismo de atualização do STI; o instalador ainda não recebe assinatura Authenticode de um certificado comercial do Windows.
+Os builds são sem console. Para diagnóstico com saída visível, execute o fonte pelo PyCharm. Configurações com credenciais não são embutidas. A assinatura Ed25519 protege o mecanismo de atualização do STI; o build padrão não configura assinatura Authenticode. Para usar um certificado Windows existente, consulte a seção a seguir.
+
+### Assinatura Authenticode no build
+
+O publicador aceita `--sign-cert` com o thumbprint de um certificado de assinatura de código existente no repositório pessoal do Windows, `--signtool` com o caminho do SignTool do Windows SDK e `--timestamp-url` com o servidor RFC 3161 indicado pelo emissor do certificado. Nenhum certificado é criado ou instalado pelo script, e nenhuma chave privada é exportada.
+
+```powershell
+.\.venv\Scripts\python.exe scripts/gerar_release.py --sign-cert "THUMBPRINT_DO_CERTIFICADO" --signtool "CAMINHO_DO_SIGNTOOL.exe" --timestamp-url "URL_RFC3161_DO_EMISSOR" --notes "Descrição da versão"
+```
+
+Substitua os três valores de exemplo pelos dados reais. O agente é assinado e verificado antes de entrar no Setup; o Setup é assinado e verificado antes da geração dos hashes e do pacote `.sti`. Uma falha ao assinar ou verificar interrompe o build. Sem essas opções, o build continua disponível para desenvolvimento e informa explicitamente que não há assinatura Windows. A assinatura Ed25519 da release é mantida nos dois modos.
+
+Uma assinatura Authenticode não equivale a aprovação do Endpoint e não garante ausência de detecção. O projeto não desativa a proteção, instala certificados de confiança ou recria executáveis removidos pelo antivírus. Antes de distribuir automaticamente em produção, valide instalação, atualização e permanência do agente com a proteção ativa. Uma estação cujo agente foi removido precisa de uma nova instalação aceita pela política da empresa; o servidor não consegue atualizar um processo que não existe.
+
+Referência: [SignTool e verificação Authenticode na documentação da Microsoft](https://learn.microsoft.com/en-us/windows/win32/seccrypto/signtool).
 
 ### Distribuir pelo servidor STI
 
 1. Atualize primeiro o servidor, instale as dependências atualizadas (`pip install -r requirements.txt`) e reinicie-o. O upload usa Flask 3.1; a migração do banco é aditiva.
-2. Entre no painel e abra **Atualizações**. Importe `STI_Release_3.4.2.sti`; importar não inicia a distribuição.
+2. Entre no painel e abra **Atualizações**. Importe `STI_Release_3.4.3.sti`; importar não inicia a distribuição.
 3. Baixe o instalador pela lista de versões ou use o arquivo local e instale uma vez nas estações com agente antigo. Máquinas descobertas apenas por ping não podem receber instalação remota por este mecanismo.
 4. Nas próximas releases, selecione a versão e comece com **Grupo piloto**, escolhendo equipamentos pelo ID permanente. Depois de conferir o resultado, libere para **Todos os agentes**.
 5. Opcionalmente, defina início e fim da janela de horário. O painel mostra o horário do servidor; uma janela como `22:00–06:00` atravessa a meia-noite. Sem janela, a oferta pode ocorrer a qualquer horário.
 6. Clique em **Liberar atualização** e acompanhe versão instalada, compatibilidade e resultado por estação. **Suspender distribuição** impede novas ofertas; uma atualização já iniciada pode terminar.
 
 A versão disponível é oferecida na resposta ao heartbeat existente. O agente baixa o pacote do próprio servidor STI com autenticação; a estação não precisa acessar GitHub nem consultar outro serviço. Somente instalações compatíveis e com versão inferior recebem a atualização. Agentes executados pelo fonte ou de forma portátil continuam funcionando e aparecem como instalação manual.
+
+Quando o último estado recebido é download, instalação ou atualização concluída, mas não há mais comunicação recente, a tela mostra **Sem confirmação recente**. Ela conserva a última versão e o último resultado como histórico, sem afirmar que o processo continua instalado ou que uma instalação antiga ainda está em andamento. Esse estado tem filtro próprio; não identifica o motivo da perda de comunicação. Logs da estação e eventos do Endpoint continuam necessários para confirmar bloqueio ou remoção.
 
 Antes de trocar o executável, o agente valida assinatura, tamanho e SHA-256. Aguarda comandos em execução e resultados pendentes antes de atualizar. Um processo auxiliar troca o arquivo, inicia a nova versão e espera até **90 segundos** pela confirmação de comunicação com o servidor. Em caso de falha de inicialização ou ausência dessa confirmação, tenta restaurar e iniciar a versão anterior. Configuração, UUID e diário de comandos são preservados. A versão anterior fica em `previous-agent.exe`; pastas temporárias concluídas são limpas na próxima tentativa de atualização.
 

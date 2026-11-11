@@ -68,6 +68,11 @@ function compareAgentVersions(first, second) {
 
 function releaseDeviceStatus(device, report = {}) {
   if (['failed', 'rolled_back'].includes(report.status)) return {key: 'failed', label: report.status === 'rolled_back' ? 'Versão anterior recuperada' : 'Falha na atualização'};
+  if (device.agent_online === false && ['downloading', 'installing', 'updated'].includes(report.status)) {
+    return {key: 'unconfirmed', label: report.status === 'updated'
+      ? 'Atualização informada · sem comunicação recente'
+      : 'Atualização sem confirmação recente'};
+  }
   if (['downloading', 'installing'].includes(report.status)) return {key: 'progress', label: report.status === 'downloading' ? 'Baixando atualização' : 'Instalando atualização'};
   const expected = releaseState.policy?.version || releaseState.reference;
   const comparison = compareAgentVersions(device.agent_version, expected);
@@ -87,8 +92,9 @@ function renderReleaseDevices() {
     return {device, report, status: releaseDeviceStatus(device, report)};
   });
   const current = rows.filter(row => row.status.key === 'current').length;
-  document.getElementById('releaseVersionSummary').textContent = `${agents.length} agentes • ${current} atualizados • referência ${releaseState.policy?.version || releaseState.reference}`;
-  document.getElementById('releaseDevices').innerHTML = rows.filter(row => filter === 'all' || row.status.key === filter).map(({device, report, status}) => `<tr><td><strong>${escapeHtml(device.name || 'Dispositivo')}</strong><small>${escapeHtml(device.ip)}${device.agent_online ? '' : ' · sem comunicação recente'}</small></td><td class="mono">${escapeHtml(device.agent_version || 'Não informada')}</td><td><span class="release-status ${status.key}">${escapeHtml(status.label)}</span>${report.result ? `<small>${escapeHtml(report.result)}</small>` : ''}</td><td>${report.supported ? 'Habilitada pelo instalador' : 'Instale o pacote V3.4 ou superior'}</td></tr>`).join('') || '<tr><td colspan="4">Nenhum agente encontrado para esse filtro.</td></tr>';
+  const unconfirmed = rows.filter(row => row.status.key === 'unconfirmed').length;
+  document.getElementById('releaseVersionSummary').textContent = `${agents.length} agentes • ${current} atualizados • ${unconfirmed} sem confirmação recente • referência ${releaseState.policy?.version || releaseState.reference}`;
+  document.getElementById('releaseDevices').innerHTML = rows.filter(row => filter === 'all' || row.status.key === filter).map(({device, report, status}) => `<tr><td><strong>${escapeHtml(getDeviceIdentity(device).name)}</strong><small>${escapeHtml(device.ip)}${device.agent_online ? '' : ' · sem comunicação recente'}</small></td><td class="mono">${escapeHtml(device.agent_version || 'Não informada')}<small>Última versão informada</small></td><td><span class="release-status ${status.key}">${escapeHtml(status.label)}</span>${report.result ? `<small>${device.agent_online ? '' : 'Último resultado: '}${escapeHtml(report.result)}</small>` : ''}</td><td>${report.supported ? device.agent_online ? 'Habilitada pelo instalador' : 'Configurada no último envio' : 'Instale o pacote V3.4 ou superior'}</td></tr>`).join('') || '<tr><td colspan="4">Nenhum agente encontrado para esse filtro.</td></tr>';
 }
 
 async function uploadRelease(event) {

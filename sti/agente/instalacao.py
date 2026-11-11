@@ -150,6 +150,7 @@ def launch_agent(root, extra_env=None, config_file=None):
     env.pop('STI_INSTALL_READY_FILE', None)
     env.pop('STI_INSTALL_READY_NONCE', None)
     env.update(extra_env or {})
+    logger.info('Solicitando execução do agente instalado em %s.', root)
     return subprocess.Popen([str(root / AGENT_FILENAME)], cwd=root, env=env,
                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
 
@@ -186,23 +187,30 @@ def register_windows(root, version, startup):
     import winreg
     root = Path(root).resolve()
     command = subprocess.list2cmdline([str(root / AGENT_FILENAME)])
+    logger.info('Registro: abrindo a chave de inicialização da conta atual.')
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r'Software\Microsoft\Windows\CurrentVersion\Run') as key:
         if startup:
+            logger.info('Registro: gravando a opção de início no login.')
             winreg.SetValueEx(key, PRODUCT, 0, winreg.REG_SZ, command)
+            logger.info('Registro: opção de início no login gravada.')
         else:
             try:
                 winreg.DeleteValue(key, PRODUCT)
             except FileNotFoundError:
                 pass
     path = r'Software\Microsoft\Windows\CurrentVersion\Uninstall\AgenteSTI'
+    logger.info('Registro: abrindo a entrada do aplicativo para desinstalação.')
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, path) as key:
         values = {'DisplayName': 'STI Agente', 'DisplayVersion': version, 'Publisher': 'STI',
                   'InstallLocation': str(root),
                   'UninstallString': subprocess.list2cmdline([str(root / 'STI_Agente_Setup.exe'), '--uninstall', '--target', str(root)])}
         for name, value in values.items():
+            logger.info('Registro: gravando o campo %s.', name)
             winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
         for name in ('NoModify', 'NoRepair'):
+            logger.info('Registro: gravando o campo %s.', name)
             winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, 1)
+    logger.info('Registro: cadastro no Windows concluído.')
 
 
 def install_agent(payload, root, version, config, startup=True, launch=True, setup_source=None, register=True):

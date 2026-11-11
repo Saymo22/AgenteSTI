@@ -705,3 +705,5 @@ button:focus-visible,a:focus-visible,[role="button"]:focus-visible { outline: 2p
 .device-os.os-network,.modal-os.os-network { color:#8caeff; }
 .device-os.os-unk,.modal-os.os-unk { color:#9eb6d0; }
 .device-classification-help { color:#a5b9d1; font-size:.75rem; line-height:1.6; }
+
+.release-status.unconfirmed { color: #edc588; }

@@ -33,7 +33,8 @@
     </div>
     <article class="panel release-inventory">
       <div class="panel-head"><div><h3>Versões nas máquinas</h3><p id="releaseVersionSummary"></p></div></div>
-      <label class="release-filter-label" for="releaseStatusFilter">Situação<select id="releaseStatusFilter"><option value="all">Todas</option><option value="current">Atualizadas</option><option value="pending">Atualização disponível</option><option value="manual">Instalador inicial necessário</option><option value="progress">Em atualização</option><option value="failed">Falha / versão recuperada</option></select></label>
+      <label class="release-filter-label" for="releaseStatusFilter">Situação<select id="releaseStatusFilter"><option value="all">Todas</option><option value="current">Atualizadas</option><option value="pending">Atualização disponível</option><option value="manual">Instalador inicial necessário</option><option value="progress">Em atualização</option><option value="unconfirmed">Sem confirmação recente</option><option value="failed">Falha / versão recuperada</option></select></label>
+      <p class="release-help">Versões e resultados correspondem ao último envio do agente. Sem comunicação recente, o servidor não confirma se o executável continua instalado ou se a atualização terminou.</p>
       <div class="release-table-scroll"><table class="release-table"><thead><tr><th>Equipamento</th><th>Instalada</th><th>Situação</th><th>Atualização automática</th></tr></thead><tbody id="releaseDevices"></tbody></table></div>
     </article>
   </div>

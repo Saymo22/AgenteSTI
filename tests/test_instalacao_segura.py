@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, MagicMock, patch
 
 import requests
 from requests.adapters import BaseAdapter
@@ -37,6 +37,16 @@ class SafeInstallTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name).resolve() / 'Agent'
         self.root.mkdir()
+
+    def test_registry_failure_identifies_last_step_without_false_completion(self):
+        registry = MagicMock()
+        registry.SetValueEx.side_effect = PermissionError('test access denied')
+        with patch.dict('sys.modules', {'winreg': registry}), self.assertLogs('STI_INSTALL', level='INFO') as logs:
+            with self.assertRaises(PermissionError):
+                instalacao.register_windows(self.root, '3.4.3', True)
+        output = '\n'.join(logs.output)
+        self.assertIn('gravando a opção de início no login', output)
+        self.assertNotIn('cadastro no Windows concluído', output)
 
     def test_atomic_status_handles_concurrent_writers(self):
         destination = self.root/'state.json'
