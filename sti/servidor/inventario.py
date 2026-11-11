@@ -199,6 +199,8 @@ def register_routes(app, require_admin, db_connect, devices, lock, threshold):
                 conn.execute('INSERT OR IGNORE INTO machine_organization SELECT ?,department,room,responsible,updated_at FROM machine_organization WHERE device_id=?',(target_id,source_id))
                 conn.execute('DELETE FROM machine_organization WHERE device_id=?',(source_id,))
                 conn.execute('UPDATE audit_events SET device_id=? WHERE device_id=?',(target_id,source_id))
+                conn.execute('DELETE FROM agent_update_state WHERE device_id=?', (target_id,))
+                conn.execute('UPDATE agent_update_state SET device_id=? WHERE device_id=?', (target_id,source_id))
                 saved = json.loads(source['snapshot'])
                 saved['device_id'] = target_id
                 conn.execute('DELETE FROM machine_inventory WHERE device_id=?',(source_id,))

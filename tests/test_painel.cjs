@@ -16,6 +16,7 @@ function loadPanel() {
   });
   const source = fs.readFileSync(path.join(__dirname, '../sti/servidor/static/painel.js'), 'utf8');
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../sti/servidor/static/som.js'), 'utf8'), context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../sti/servidor/static/releases.js'), 'utf8'), context);
   vm.runInContext(source.replace(/\s+init\(\);\s*$/, ''), context);
   return {run: code => vm.runInContext(code, context), nodes};
 }
@@ -393,4 +394,15 @@ test('remapeamento reinicia detecção dos IPs sem agente sem criar notificaçõ
        processStatusChanges([{ip:'10.2.116.1',online:true},{device_id:'agente',ip:'10.2.116.2',online:true}]);`);
   assert.equal(run('state.notifications.length'),0);
   assert.equal(run('state.previousStatus.agente'),true);
+});
+
+test('controle de versões distingue versão atual, inicialização manual, grupo e recuperação', () => {
+  const {run}=loadPanel();
+  run(`releaseState.policy={version:'3.4.0',scope:'selected',device_ids:['teste']};`);
+  assert.equal(run(`releaseDeviceStatus({agent_version:'3.4.0'},{}).key`),'current');
+  assert.equal(run(`releaseDeviceStatus({agent_version:'3.3.0'},{}).key`),'manual');
+  assert.equal(run(`releaseDeviceStatus({device_id:'outro',agent_version:'3.3.0'},{supported:true}).label`),'Fora do grupo de teste');
+  assert.equal(run(`releaseDeviceStatus({agent_version:'3.4.0'},{status:'rolled_back'}).key`),'failed');
+  assert.equal(run(`compareAgentVersions('3.10.0','3.9.0')`),1);
+  assert.equal(run(`compareAgentVersions('legado','3.4.0')`),null);
 });

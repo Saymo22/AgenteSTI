@@ -64,6 +64,7 @@ function init() {
    initNotifications();
    initAlertSoundControls();
    initSoundSettings();
+   initReleaseControls();
 
     updateClock();
 
@@ -215,6 +216,7 @@ function init() {
       document.getElementById(`view-${actualView}`).classList.add('active');
       updateFilterPill();
       renderAll();
+      if (view === 'updates') loadReleases();
       const viewNames = {overview:'Visão Geral','116':'Faixa IP 116','117':'Faixa IP 117','118':'Faixa IP 118','119':'Rede Servidor 119',mapping:'Mapeamento',history:'Histórico de Log'};
       addEventLog('info', 'Navegação do painel', `A visualização foi alterada para ${viewNames[view] || view}.`, new Date());
     }
@@ -227,7 +229,8 @@ function init() {
         '118': 'Faixa 10.2.118.x',
         '119': 'Rede Servidor 10.2.119.x',
         mapping: 'Visualização por rede',
-        history: 'Eventos e logs'
+        history: 'Eventos e logs',
+        updates: 'Versões e releases'
       };
       el.filterPill.textContent = labels[state.currentView] || 'Todos os dispositivos';
     }
@@ -241,6 +244,7 @@ function init() {
         updateScanState(data.scan || {});
         processStatusChanges(devices);
         state.devices = devices;
+        if (state.currentView === 'updates') renderReleaseDevices();
         const conflicts = Array.isArray(data.identity_conflicts) ? data.identity_conflicts : [];
         const banner = document.getElementById('identityConflictBanner');
         banner.hidden = !conflicts.length;
