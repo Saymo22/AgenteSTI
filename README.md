@@ -226,6 +226,14 @@ Ping e DNS não informam o usuário conectado nem o sistema operacional. Para es
 
 Latência sem medição recente aparece como **Não medida**, em vez de `0 ms`. O valor zero continua válido quando retornado pelo ping. Após reiniciar o servidor, o horário histórico do agente é preservado, mas uma nova comunicação é necessária para habilitar ações remotas.
 
+## Remapear a descoberta da rede
+
+Na seção **Dispositivos**, clique em **Remapear rede**. O painel mostra quantos registros sem agente serão removidos, quantos estão offline, quantos equipamentos com agente serão mantidos e a faixa que será escaneada. Confirme para limpar a descoberta anterior e iniciar uma nova varredura. O andamento e o resultado aparecem junto aos filtros.
+
+A limpeza remove os registros de descoberta por IP, tanto online quanto offline. Equipamentos identificados pelo agente, inclusive agentes antigos e cadastros permanentes sem IP atual, continuam no inventário. Setor, sala, responsável, auditoria e histórico são mantidos. O cadastro administrativo por IP reaparece quando aquele endereço é descoberto novamente. Comandos pendentes associados a registros removidos são encerrados.
+
+O remapeamento aguarda a conclusão de qualquer varredura em andamento. Durante a limpeza e a nova varredura, os botões de escaneamento e remapeamento ficam desativados. A faixa padrão é `10.2.116.0/22`. Os equipamentos descobertos são os que respondem ao ping, além dos que enviam dados pelo agente. Sem agente, endereços antigos podem acumular novamente após mudanças de IP, e celulares ou outros dispositivos também podem responder à varredura.
+
 ## Som personalizado dos alertas
 
 Clique no ícone de som da barra superior para configurar o áudio. Use **Escolher arquivo de áudio** para selecionar MP3, WAV, OGG ou M4A (até 10 MB), ajuste o volume e clique em **Testar som**. Depois, clique em **Ativar alertas sonoros**. Cada alerta de queda reproduz até os primeiros 10 segundos; ocorrências simultâneas geram uma única reprodução por atualização, sem sobrepor arquivos.
@@ -281,6 +289,7 @@ Ou use `STI_Agente_V3_3.exe --new-identity` na estação. A operação é local,
 | PATCH | `/api/devices/<ip>/organization` | Sessão administrativa; aceita ID permanente ou IP legado; edita setor (`department`), sala (`room`) e responsável (`responsible`). |
 | POST | `/api/inventory/<device_id>/reconcile` | Sessão administrativa; recupera um cadastro anterior após revisão de reinstalação. |
 | POST | `/api/scan` | Solicita varredura manual. |
+| GET/POST | `/api/remap` | Prévia e remapeamento da descoberta sem agente. POST exige `{"confirm": true}`. |
 | GET | `/api/history` | Últimos 300 snapshots. |
 | GET | `/api/events` | Auditoria; filtros `device_id`, `ip`, `category`, `limit` (1–500). |
 | POST | `/api/command/<ip>` | JSON com `command`, `message` quando for `msg`, e `device_id` para máquinas identificadas; retorna `202` e `command_id`. |

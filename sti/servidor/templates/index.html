@@ -254,7 +254,9 @@
                   <option value="room">Sala</option><option value="responsible">Responsável</option>
                 </select></label>
                 <button type="button" class="tool-btn" id="clearOrganizationFilters">Limpar filtros</button>
+                <button type="button" class="tool-btn remap-button" id="btnRemap" title="Limpar a descoberta sem agente e escanear toda a rede novamente">{{ icon('refresh') }} Remapear rede</button>
                 <p id="organizationResultCount" aria-live="polite"></p>
+                <p id="remapStatus" class="remap-status" role="status" aria-live="polite" hidden></p>
                 <p id="identityConflictBanner" class="identification-notice pending" role="status" hidden></p>
               </div>
               <div class="devices-grid" id="devicesGrid"></div>
