@@ -46,6 +46,7 @@ from sti.agente.identidade import collect_identity, persistent_identity, renew_i
 from sti.agente import atualizacao
 from sti.comum.versao import AGENT_VERSION
 from sti.comum.configuracao import CONFIG_FILE
+from sti.comum.empacotamento import is_bundled
 
 
 # ============================================
@@ -974,7 +975,7 @@ def diagnosticar_rede():
 def ocultar_console():
 
     # Não esconder o terminal do PyCharm
-    if not getattr(sys, "frozen", False):
+    if not is_bundled():
         return
 
     if platform.system() != "Windows":

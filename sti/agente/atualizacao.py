@@ -15,6 +15,7 @@ from sti.agente.instalacao import installation_marker, installation_lock, launch
 from sti.comum.releases import (AGENT_FILENAME, MAX_PACKAGE, atomic_json, read_json,
                                verify_manifest, unpack_agent, version_tuple, file_hash)
 from sti.comum.versao import AGENT_VERSION
+from sti.comum.empacotamento import is_bundled, executable_path
 
 logger = logging.getLogger('STI_AGENT')
 pending_offer = None
@@ -23,10 +24,10 @@ health_sent = False
 
 
 def installed_root():
-    if not getattr(sys, 'frozen', False):
+    if not is_bundled():
         return None
-    root = Path(sys.executable).resolve().parent
-    if Path(sys.executable).name.casefold() != AGENT_FILENAME.casefold():
+    root = executable_path().parent
+    if executable_path().name.casefold() != AGENT_FILENAME.casefold():
         return None
     try:
         installation_marker(root)
@@ -165,10 +166,10 @@ def begin_update(session, server_url, token, agent_id, config_file):
         unpack_agent(package, staging / 'verified-agent.exe', manifest)
         (staging / 'verified-agent.exe').unlink()
         helper = staging / 'STI_Update.exe'
-        shutil.copyfile(sys.executable, helper)
+        shutil.copyfile(executable_path(), helper)
         plan = {'root': str(root), 'package': str(package), 'release': offer['release'],
                 'rollout_id': rollout, 'parent_pid': os.getpid(), 'config_file': str(config_file),
-                'previous_agent_hash': file_hash(sys.executable),
+                'previous_agent_hash': file_hash(executable_path()),
                 'nonce': str(uuid.uuid4()), 'health_file': str(staging / 'health.json')}
         atomic_json(staging / 'plan.json', plan)
         save_status(root, 'installing', version, rollout)
