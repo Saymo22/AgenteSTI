@@ -32,7 +32,7 @@ def validate_update_status(data):
     supported = data.get('update_supported', False)
     if not isinstance(supported, bool):
         raise ValueError('update_supported deve ser booleano.')
-    if data.get('update_protocol', 1) != 1:
+    if data.get('update_protocol', 1) not in (1, 2):
         supported = False
     report = data.get('update_status', {})
     if not isinstance(report, dict):
@@ -71,7 +71,7 @@ def in_window(start, end, now=None):
     return start <= clock < end if start < end else clock >= start or clock < end
 
 
-def update_offer(conn, device_id, version, supported):
+def update_offer(conn, device_id, version, supported, protocol=1):
     if not supported or not device_id:
         return None
     policy = load_policy(conn)
@@ -87,7 +87,10 @@ def update_offer(conn, device_id, version, supported):
     row = conn.execute('SELECT envelope FROM agent_releases WHERE version=?', (policy['version'],)).fetchone()
     if not row:
         return None
-    return {'release': json.loads(row[0]), 'rollout_id': policy['rollout_id'],
+    envelope = json.loads(row[0])
+    if envelope['manifest']['format'] != protocol:
+        return None
+    return {'release': envelope, 'rollout_id': policy['rollout_id'],
             'download_path': f"/api/agent/releases/{policy['version']}/package"}
 
 
@@ -101,36 +104,41 @@ def import_bundle(bundle, root, conn):
     with tempfile.TemporaryDirectory(prefix='release-', dir=root) as temporary:
         staging = Path(temporary)
         with zipfile.ZipFile(bundle) as archive:
-            if sorted(archive.namelist()) != ['agent.zip', 'installer.exe', 'manifest.json']:
-                raise ValueError('O arquivo de release deve conter manifest.json, agent.zip e installer.exe.')
+            if 'manifest.json' not in archive.namelist():
+                raise ValueError('Manifesto da release não encontrado.')
             if archive.getinfo('manifest.json').file_size > 32768:
                 raise ValueError('Manifesto da release excede o limite.')
             envelope = json.loads(archive.read('manifest.json'))
             manifest = verify_manifest(envelope)
-            for name, maximum in (('agent.zip', MAX_PACKAGE), ('installer.exe', MAX_BINARY)):
+            msi = manifest['format'] == 2
+            files = [('installer.msi', MAX_BINARY)] if msi else [('agent.zip', MAX_PACKAGE), ('installer.exe', MAX_BINARY)]
+            if sorted(archive.namelist()) != sorted(['manifest.json', *[name for name, _ in files]]):
+                raise ValueError('Conteúdo da release incompatível com o manifesto.')
+            for name, maximum in files:
                 if archive.getinfo(name).file_size > maximum:
                     raise ValueError('Arquivo da release excede o limite.')
                 with archive.open(name) as source:
                     copy_limited(source, staging / name, maximum)
-        verify_file(staging / 'installer.exe', manifest['installer'])
-        unpack_agent(staging / 'agent.zip', staging / 'verified-agent.exe', manifest)
-        (staging / 'verified-agent.exe').unlink()
+        verify_file(staging / ('installer.msi' if msi else 'installer.exe'), manifest['installer'])
+        if not msi:
+            unpack_agent(staging / 'agent.zip', staging / 'verified-agent.exe', manifest)
+            (staging / 'verified-agent.exe').unlink()
         version = manifest['version']
         existing = conn.execute('SELECT envelope FROM agent_releases WHERE version=?', (version,)).fetchone()
         if existing and json.loads(existing[0]) != envelope:
             raise ValueError('Essa versão já foi publicada com outro conteúdo. Gere uma versão nova.')
         destination = root / version
         if destination.exists():
-            verify_file(destination / 'agent.zip', manifest['package'])
-            verify_file(destination / 'installer.exe', manifest['installer'])
+            for name, _ in files:
+                verify_file(destination / name, manifest['installer'] if name.startswith('installer.') else manifest['package'])
         else:
             destination.mkdir()
             try:
-                for name in ('agent.zip', 'installer.exe'):
+                for name, _ in files:
                     (staging / name).replace(destination / name)
             except Exception:
                 # Somente arquivos conhecidos dentro do diretório desta versão recém-criada.
-                for name in ('agent.zip', 'installer.exe'):
+                for name, _ in files:
                     (destination / name).unlink(missing_ok=True)
                 destination.rmdir()
                 raise
@@ -237,10 +245,12 @@ def register_routes(app, require_admin, db_connect, get_db_file, agent_authentic
             version_tuple(version)
         except ValueError:
             return jsonify(ok=False, error='Versão inválida.'), 400
-        path = storage_path(get_db_file()) / version / 'installer.exe'
+        folder = storage_path(get_db_file()) / version
+        msi = (folder / 'installer.msi').is_file()
+        path = folder / ('installer.msi' if msi else 'installer.exe')
         if not path.is_file():
             return jsonify(ok=False, error='Instalador não encontrado.'), 404
-        return send_file(path, as_attachment=True, download_name=f'STI_Agente_Setup_{version}.exe')
+        return send_file(path, as_attachment=True, download_name=f'STI_Agente_{version}.msi' if msi else f'STI_Agente_Setup_{version}.exe')
 
     @app.get('/api/agent/releases/<version>/package')
     def agent_package(version):
@@ -255,10 +265,12 @@ def register_routes(app, require_admin, db_connect, get_db_file, agent_authentic
                                    (request.headers.get('X-Agent-ID', ''), request.remote_addr)).fetchone()
         if not binding:
             return jsonify(ok=False, error='Identidade do agente não corresponde ao endereço atual.'), 403
-        path = storage_path(get_db_file()) / version / 'agent.zip'
+        folder = storage_path(get_db_file()) / version
+        msi = (folder / 'installer.msi').is_file()
+        path = folder / ('installer.msi' if msi else 'agent.zip')
         if not path.is_file():
             return jsonify(ok=False, error='Pacote não encontrado.'), 404
-        return send_file(path, as_attachment=True, download_name=f'STI_Agente_{version}.zip')
+        return send_file(path, as_attachment=True, download_name=f'STI_Agente_{version}.msi' if msi else f'STI_Agente_{version}.zip')
 
     @app.post('/api/agent/update-status')
     def agent_update_status():

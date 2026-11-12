@@ -26,10 +26,12 @@ def create_bundle(agent, installer, version, notes, private_key, destination):
     version_tuple(version)
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
-    package = destination / 'agent.zip'
-    with zipfile.ZipFile(package, 'w', zipfile.ZIP_DEFLATED) as archive:
-        archive.write(agent, 'STI_Agente.exe')
-    manifest = {'format': 1, 'platform': 'windows-x64', 'version': version, 'notes': notes,
+    msi = Path(installer).suffix.lower() == '.msi'
+    package = Path(installer) if msi else destination / 'agent.zip'
+    if not msi:
+        with zipfile.ZipFile(package, 'w', zipfile.ZIP_DEFLATED) as archive:
+            archive.write(agent, 'STI_Agente.exe')
+    manifest = {'format': 2 if msi else 1, 'platform': 'windows-x64', 'version': version, 'notes': notes,
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'agent': file_info(agent), 'package': file_info(package), 'installer': file_info(installer)}
     key = serialization.load_pem_private_key(Path(private_key).read_bytes(), password=None)
@@ -41,11 +43,13 @@ def create_bundle(agent, installer, version, notes, private_key, destination):
     manifest_path.write_text(json.dumps(envelope, ensure_ascii=False, indent=2), encoding='utf-8')
     bundle = destination / f'STI_Release_{version}.sti'
     with zipfile.ZipFile(bundle, 'w', zipfile.ZIP_DEFLATED) as archive:
-        archive.write(package, 'agent.zip')
-        archive.write(installer, 'installer.exe')
+        if not msi:
+            archive.write(package, 'agent.zip')
+        archive.write(installer, 'installer.msi' if msi else 'installer.exe')
         archive.write(manifest_path, 'manifest.json')
-    copied_installer = destination / f'STI_Agente_Setup_{version}.exe'
-    shutil.copyfile(installer, copied_installer)
+    copied_installer = destination / (f'STI_Agente_{version}.msi' if msi else f'STI_Agente_Setup_{version}.exe')
+    if Path(installer).resolve() != copied_installer.resolve():
+        shutil.copyfile(installer, copied_installer)
     return bundle, copied_installer, manifest_path
 
 
@@ -60,6 +64,8 @@ def main():
     parser.add_argument('--signtool', type=Path, help='Caminho do SignTool do Windows SDK.')
     parser.add_argument('--timestamp-url', help='Servidor RFC 3161 do emissor do certificado.')
     args = parser.parse_args()
+    if sys.platform != 'win32' or sys.version_info[:2] != (3, 12):
+        parser.error('Gere o MSI no Windows com Python 3.12 de 64 bits.')
     try:
         signing = signing_options(args.sign_cert, args.timestamp_url, args.signtool)
     except ValueError as error:
@@ -76,14 +82,12 @@ def main():
         version = '.'.join(map(str, values))
         (ROOT / 'sti/comum/versao.py').write_text(f'AGENT_VERSION = "{version}"\n', encoding='utf-8')
     notes = args.notes_file.read_text(encoding='utf-8') if args.notes_file else args.notes
-    subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', 'packaging/STI_Agente_V3_4.spec'], cwd=ROOT, check=True)
+    subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', 'packaging/agente.spec'], cwd=ROOT, check=True)
     sign_and_verify(ROOT / 'dist/STI_Agente.exe', signing)
-    resources = ROOT / 'build/release-resources'
-    resources.mkdir(parents=True, exist_ok=True)
-    (resources / 'setup-info.json').write_text(json.dumps({'version': version, 'agent': file_info(ROOT / 'dist/STI_Agente.exe')}), encoding='utf-8')
-    subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', 'packaging/STI_Agente_Setup.spec'], cwd=ROOT, check=True)
-    sign_and_verify(ROOT / 'dist/STI_Agente_Setup.exe', signing)
-    artifacts = create_bundle(ROOT / 'dist/STI_Agente.exe', ROOT / 'dist/STI_Agente_Setup.exe', version,
+    from scripts.msi import build_msi
+    installer = build_msi(ROOT / 'dist/STI_Agente.exe', ROOT / 'build/msi' / f'STI_Agente_{version}.msi', version)
+    sign_and_verify(installer, signing)
+    artifacts = create_bundle(ROOT / 'dist/STI_Agente.exe', installer, version,
                               notes, args.key, ROOT / 'dist/releases' / version)
     print('Release assinada gerada em ' + str(artifacts[0]))
     print('Authenticode: ' + ('executáveis assinados e verificados.' if signing else 'não configurado; executáveis sem assinatura Windows.'))

@@ -1063,8 +1063,6 @@ def iniciar_agente():
         logger.exception("Não foi possível carregar a identidade persistente; verifique o arquivo e suas permissões.")
         return
     init_journal(agent_id)
-    from sti.agente.instalacao import acknowledge_installation
-    acknowledge_installation()
     diagnosticar_rede()
 
     with requests.Session() as session_http:

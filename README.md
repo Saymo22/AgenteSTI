@@ -1,4 +1,4 @@
-# STI Command Center — V3.4.3
+# STI Command Center — V3.5.0
 
 Monitoramento e gerenciamento de máquinas Windows, com servidor Flask/Waitress, banco SQLite e agente para os computadores dos usuários.
 
@@ -6,9 +6,9 @@ A rede padrão foi preservada: **10.2.116.0/22**, com os segmentos **116, 117, 1
 
 ## O que esta versão melhora
 
-- Instalador Windows por usuário, inicialização com o login e desinstalação pelas configurações do Windows.
+- Instalador MSI por usuário, inicialização com o login e desinstalação pelas configurações do Windows.
 - Releases assinadas, versões dos agentes no painel, distribuição por grupo piloto ou para todos e janela de horário.
-- Atualização automática pela comunicação com o servidor STI, com verificação do pacote e recuperação da versão anterior quando a nova não inicia ou não confirma comunicação.
+- Atualização automática pela comunicação com o servidor STI, com pacote verificado e instalação gerenciada pelo Windows Installer.
 - Telemetria validada: nome, usuário, versão do Windows, CPU, RAM, disco, uptime e impressoras.
 - Presença da máquina por ping separada da comunicação recente do agente.
 - Comandos condicionados às capacidades e à disponibilidade do agente.
@@ -38,8 +38,9 @@ AgenteSTI/
 │   │   └── static/             # CSS, JavaScript, imagens e bibliotecas
 │   ├── agente/
 │   │   ├── cliente.py          # Telemetria e comandos do agente
-│   │   ├── instalacao.py       # Instalação e registro no Windows
-│   │   └── atualizacao.py      # Download, troca e recuperação do executável
+│   │   ├── instalacao.py       # Validação e preservação da configuração
+│   │   ├── msi.py              # Integração com Windows Installer
+│   │   └── atualizacao.py      # Download verificado e atualização por MSI
 │   └── comum/
 │       ├── configuracao.py     # Configuração compartilhada
 │       ├── versao.py           # Versão única do agente
@@ -47,16 +48,15 @@ AgenteSTI/
 ├── scripts/
 │   ├── preparar_config.py      # Geração dos arquivos locais
 │   ├── chave_release.py        # Preparação da chave de assinatura
-│   └── gerar_release.py        # Build e release assinada
+│   ├── gerar_release.py        # Build e release assinada
+│   └── msi.py                  # Construção do pacote Windows Installer
 ├── config/
 │   └── sti-config.example.json # Exemplo sem credenciais
 ├── requirements/
 │   ├── dev.txt                 # Dependências para build
 │   └── windows-lock.txt        # Versões validadas no Windows
 ├── packaging/
-│   ├── STI_Agente_V3_4.spec     # Build atual do agente
-│   ├── STI_Agente_Setup.spec    # Build do instalador
-│   └── legacy/                 # Especificações antigas
+│   └── agente.spec             # Único perfil atual de build do agente
 └── tests/                      # Testes Python e JavaScript
 ```
 
@@ -99,7 +99,7 @@ Ele cria dois arquivos ignorados pelo Git:
 
 O script não sobrescreve configurações existentes. Na cópia local desta entrega, os dois arquivos já foram gerados. Abra `sti-config.json` no PyCharm para consultar ou editar a senha de login. Confira se `STI_SERVER_IP` em `agent-config.json` corresponde à máquina que executará o servidor.
 
-**Não distribua o `sti-config.json` do servidor aos usuários.** No instalador, importe `agent-config.json`. Na execução portátil, renomeie uma cópia dele para `sti-config.json` ao lado do executável.
+**Não distribua o `sti-config.json` do servidor aos usuários.** Na primeira instalação MSI, deixe `agent-config.json` ao lado do pacote ou informe seu caminho na janela. Na execução portátil, renomeie uma cópia dele para `sti-config.json` ao lado do executável.
 
 As variáveis de ambiente têm prioridade sobre o JSON. `STI_CONFIG_FILE` permite apontar para outro arquivo. Sem essa variável, o JSON é procurado na raiz do projeto ou junto ao executável empacotado. Não há leitura automática de `.env`.
 
@@ -145,54 +145,23 @@ O agente pode rodar a partir de `agente.py` com as dependências instaladas, ou 
 .\.venv\Scripts\python.exe agente.py
 ```
 
-Para distribuir, use **`STI_Agente_Setup_3.4.3.exe`**, importe `agent-config.json`, confira o servidor e instale. Não é necessário instalar Python na estação. O instalador também permite preencher servidor, porta, token e HTTPS diretamente.
+Para distribuir, use **`dist/releases/3.5.0/STI_Agente_3.5.0.msi`**, acompanhado do **`agent-config.json`** preparado para o seu servidor. Não é necessário instalar Python nas estações.
 
-A instalação fica em **`%LOCALAPPDATA%\STI\Agent`**, na conta que executa o instalador. Por padrão, registra a inicialização no login dessa conta e uma entrada em **Aplicativos instalados** do Windows. O agente funciona na sessão do usuário, preservando as mensagens no desktop; não é um serviço de sistema. Os dados de usuário priorizam uma sessão Windows ativa e usam o usuário do processo como fallback.
+O MSI instala em **`%LOCALAPPDATA%\STI\Agent`**, na conta que o executa. A inicialização acontece no login dessa conta; o agente continua na sessão do usuário, permitindo mensagens no desktop. Não é um serviço de sistema. Use a mesma conta do agente anterior, sem executar como outro administrador.
 
-Agentes V3.3 e anteriores precisam receber este instalador **uma vez** para habilitar a atualização automática. Execute-o na mesma conta usada pelo agente atual, importe sua configuração e preserve o arquivo de identidade. Feche manualmente o agente portátil antigo antes de instalar: o instalador recusa encerrá-lo apenas pelo nome do arquivo. Somente processos da instalação de destino e da mesma conta podem ser encerrados automaticamente. Remova tarefas, atalhos ou outros mecanismos manuais de inicialização do executável antigo para que ele não volte no próximo login.
+Na migração de qualquer versão anterior à 3.5.0, feche manualmente o agente antigo e execute o MSI **uma vez**. A configuração `sti-config.json` já instalada tem prioridade e é preservada. Mantenha o arquivo de identidade; não remova `%ProgramData%\STI` nem `%LOCALAPPDATA%\STI`. Remova atalhos ou tarefas que iniciavam uma cópia portátil antiga para evitar duplicidade.
 
-O instalador preserva configurações existentes e o UUID; permite atualização manual e recusa uma versão inferior à instalada. A desinstalação remove executáveis e registros de inicialização, preservando configuração, identidade, logs e diário de comandos.
+Na janela do MSI é possível informar o caminho do `agent-config.json` e escolher iniciar no login ou manualmente. A primeira instalação falha e desfaz os arquivos gerenciados se não encontrar uma configuração válida. Configuração, UUID, logs e diário de comandos não pertencem aos arquivos removidos pelo MSI. Desinstale por **Aplicativos instalados** do Windows.
 
-Desde a V3.4.2, o Setup espera até 45 segundos por uma confirmação local com identificador único e versão, emitida após preparar configuração, identidade e diário de comandos. Se o processo encerrar ou não confirmar no prazo, informa falha em vez de anunciar sucesso. Essa confirmação verifica a inicialização local; a conexão ao servidor deve ser conferida no painel. Com `--no-launch`, os arquivos são instalados sem iniciar ou confirmar o agente.
-
-As etapas e falhas ficam em `%LOCALAPPDATA%\STI\logs\instalador.log`, com rotação, sem gravar token nem conteúdo da configuração. Se o Endpoint interromper o Setup, o último registro ajuda a localizar a etapa; consulte também os eventos do antivírus. A instalação não altera a proteção do Endpoint. Não há validação desta versão no Kaspersky da empresa nem garantia de eliminação do alerta.
-
-Telemetria e confirmação de comandos recusam redirecionamentos HTTP, assim como os downloads, evitando encaminhar `X-Agent-Token` para outro destino. Configure o endereço final do servidor. HTTP continua disponível para compatibilidade com a rede existente; use HTTPS configurado no servidor para proteger o conteúdo em trânsito.
-
-Para instalação sem interface, com configuração já preparada:
+Para instalação silenciosa, deixe o JSON ao lado do MSI e execute na conta do usuário:
 
 ```powershell
-.\STI_Agente_Setup_3.4.3.exe --silent --config .\agent-config.json
+msiexec.exe /i ".\STI_Agente_3.5.0.msi" /qn /norestart /l*v ".\instalacao-sti.log"
 ```
 
-As opções `--no-startup` e `--no-launch` desabilitam, respectivamente, o início no login e a execução ao terminar a instalação. A instalação silenciosa também é por usuário: executá-la como outra conta instala para essa outra conta.
+Também é possível informar `STI_CONFIGFILE="C:\caminho\agent-config.json"` e `STI_STARTUP=0`. Nunca passe o token como argumento do MSI. O código 0 indica sucesso; 3010 indica sucesso com reinicialização pendente. O MSI não força a reinicialização do Windows. Confira a comunicação do agente no painel; instalar os arquivos não comprova que o Endpoint permitiu executá-lo.
 
-### Configuração do agente
-
-| Chave | Padrão | Finalidade |
-| --- | --- | --- |
-| `STI_SERVER_IP` | `10.2.116.121` | IP/DNS do servidor. |
-| `STI_SERVER_PORT` | `5000` | Porta do servidor. |
-| `STI_AGENT_TOKEN` | vazio | Mesmo token do servidor. |
-| `STI_USE_HTTPS` | `false` | Usa um endpoint HTTPS já configurado. |
-| `STI_IDENTITY_FILE` | automático | Caminho opcional para o SQLite de identidade da estação. Não reutilize o arquivo entre computadores. |
-| `STI_ALLOW_POWER_COMMANDS` | `false` | Habilita explicitamente reiniciar/desligar nesse agente. |
-| `AGENT_INTERVAL` | `30` | Pausa após envio bem-sucedido, em segundos. |
-| `RETRY_INTERVAL` | `10` | Pausa após falha, em segundos. |
-
-Trocar endereço ou token no JSON exige reiniciar o agente, mas não recompilar. O servidor também lê sua configuração na inicialização.
-
-Os logs ficam em `%LOCALAPPDATA%\STI\logs\agente_v3_1.log`, com rotação de 2 MiB e até três backups. O nome legado do log foi mantido para continuidade. O registro de comandos fica em `%LOCALAPPDATA%\STI\commands.db`. Não apague esse registro durante uma recuperação: ele evita repetir ações. Registros confirmados com mais de sete dias são removidos ao iniciar o agente.
-
-Para validar coleta e configuração sem iniciar o loop, sem comunicar com o servidor e sem executar comandos:
-
-```powershell
-.\.venv\Scripts\python.exe agente.py --check
-# Ou, na máquina do usuário:
-.\STI_Agente.exe --check
-```
-
-O diagnóstico mostra dados da máquina local. RAM e disco são enviados em unidades de 1024³ bytes; falha na consulta de disco é enviada como valor ausente, sem fingir disco de tamanho zero.
+Os erros da preparação da configuração ficam em `%LOCALAPPDATA%\STI\logs\instalador.log`. O parâmetro `/l*v` grava o log do Windows Installer. Preserve os logs ao investigar falhas.
 
 ## Mensagens, reinicialização e desligamento
 
@@ -208,41 +177,9 @@ Ao exceder o prazo, o job passa para `expired`, libera a fila e registra que a e
 
 ## Gerar instalador e release
 
-### Prova experimental com Nuitka
+### Build do MSI e da release
 
-O fluxo de produção continua usando PyInstaller. O script `scripts/prova_nuitka.py` gera artefatos separados em `dist/compatibilidade/nuitka/<versão>/`, sem incrementar a versão, assinar ou importar releases e sem alterar configurações de antivírus. O perfil usa console visível para diagnóstico; não é uma release substituta da V3.4.3. Nuitka 4.3.5, Python 3.12 de 64 bits e as dependências de compilação ficam em `requirements/nuitka.txt`.
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements/nuitka.txt
-.\.venv\Scripts\python.exe scripts/prova_nuitka.py --component agente --mode standalone
-.\.venv\Scripts\python.exe scripts/verificar_nuitka.py --mode standalone
-```
-
-O primeiro build pode baixar MinGW64 e ferramentas auxiliares; os caches ficam em `build/nuitka-cache`. `--compiler msvc` seleciona um Visual C++ já instalado. O perfil limita a compilação a quatro tarefas e desabilita LTO para reduzir o tempo da prova; não é um comparativo de desempenho. O modo standalone precisa da pasta `.dist` completa, incluindo DLLs e chave pública, e não funciona distribuindo apenas o `.exe`.
-
-Nesta prova, o Nuitka avisou que as DLLs do Windows Runtime não foram incluídas. O piloto deve possuir o runtime Visual C++ x64 compatível; os downloads oficiais ficam na [documentação da Microsoft](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist). Esse requisito é separado do Python: o destino não precisa de Python instalado. A prova local não substitui um teste em uma estação limpa.
-
-Para avaliar a distribuição em arquivo único e o instalador atual:
-
-```powershell
-.\.venv\Scripts\python.exe scripts/prova_nuitka.py --component agente --mode onefile
-.\.venv\Scripts\python.exe scripts/verificar_nuitka.py --mode both
-.\.venv\Scripts\python.exe scripts/prova_nuitka.py --component instalador --mode both
-```
-
-O instalador usa o agente onefile já compilado como payload, preservando o mecanismo de instalação existente. Compilar o instalador como standalone permite testar seus recursos e interface, mas os fluxos que copiam somente o executável (desinstalador e instalação do Setup local) exigem onefile. O verificador copia os artefatos para uma pasta temporária e executa `--check`, sem rede, sem registrar inicialização e sem substituir agentes reais. Os logs podem conter inventário do computador local; ficam em `.test-tmp` e não fazem parte da distribuição. O relatório registra explicitamente que não houve teste com o Kaspersky.
-
-No Setup, `--inspect caminho.json --check-ui` verifica o hash do payload e a inicialização de Tcl/Tk e dos widgets usados pelo instalador, sem exibir janela, instalar arquivos ou gravar startup. A detecção de empacotamento foi centralizada em `sti/comum/empacotamento.py`: PyInstaller usa `sys.frozen`/`_MEIPASS`, enquanto Nuitka usa `__compiled__` e `sys.argv[0]` para localizar o executável original no modo onefile.
-
-A prova local concluiu coleta e persistência de UUID nos modos standalone e onefile, leitura do JSON ao lado do executável a partir de outro diretório, validação do payload e Tcl/Tk nos dois modos do Setup, atualização real de PyInstaller 3.4.2 para Nuitka 3.4.3 e recuperação pelo helper Nuitka após uma atualização inválida. Um build PyInstaller de regressão também iniciou e preservou configuração e identidade. Os testes usaram servidor local e pastas temporárias, sem registrar startup. Não foram validados o Kaspersky, a implantação em uma estação limpa ou uma desinstalação real do pacote Nuitka.
-
-O ZIP `STI_Nuitka_POC_3.4.3.zip`, em `dist/compatibilidade/nuitka/3.4.3/`, contém os executáveis onefile, instruções e resultados. Ele não é um pacote `.sti` para importar no painel. A prova mantém a versão 3.4.3 para comparação; uma futura release de produção com Nuitka precisa de outro número e da assinatura STI original. A release PyInstaller já publicada permanece imutável.
-
-Referências: [Nuitka: detecção de compilação](https://nuitka.net/user-documentation/tips.html) e [validação inicial em standalone](https://nuitka.net/user-documentation/tutorial-setup-and-build.html).
-
-### Build de produção com PyInstaller
-
-No Windows, com Python 3.12 de 64 bits:
+No Windows, com **Python 3.12 de 64 bits** (o autor MSI usa `msilib`, removido no Python 3.13):
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements/dev.txt
@@ -258,12 +195,12 @@ O build gera:
 | Arquivo | Uso |
 | --- | --- |
 | `dist/STI_Agente.exe` | Executável portátil; não habilita atualização automática sem instalação. |
-| `dist/releases/3.4.3/STI_Agente_Setup_3.4.3.exe` | Instalação inicial nas estações, sem Python. |
-| `dist/releases/3.4.3/STI_Release_3.4.3.sti` | Pacote assinado para importar no painel STI. |
-| `dist/releases/3.4.3/manifest.json` | Versão, notas, hashes e assinatura. |
-| `dist/releases/3.4.3/agent.zip` | Executável empacotado para download pelos agentes. |
+| `dist/releases/3.5.0/STI_Agente_3.5.0.msi` | Instalação inicial nas estações, sem Python. |
+| `dist/releases/3.5.0/STI_Release_3.5.0.sti` | Pacote assinado para importar no painel STI. |
+| `dist/releases/3.5.0/manifest.json` | Versão, notas, hashes e assinatura. |
 
-O executável mantém o nome `STI_Agente.exe` entre versões; a versão é definida em `sti/comum/versao.py`. Para gerar a próxima correção, por exemplo `3.4.4`:
+
+O executável mantém o nome `STI_Agente.exe` entre versões; a versão é definida em `sti/comum/versao.py`. Para gerar a próxima correção, por exemplo `3.5.1`:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/gerar_release.py --bump patch --notes "Descrição das correções desta versão."
@@ -281,7 +218,7 @@ O publicador aceita `--sign-cert` com o thumbprint de um certificado de assinatu
 .\.venv\Scripts\python.exe scripts/gerar_release.py --sign-cert "THUMBPRINT_DO_CERTIFICADO" --signtool "CAMINHO_DO_SIGNTOOL.exe" --timestamp-url "URL_RFC3161_DO_EMISSOR" --notes "Descrição da versão"
 ```
 
-Substitua os três valores de exemplo pelos dados reais. O agente é assinado e verificado antes de entrar no Setup; o Setup é assinado e verificado antes da geração dos hashes e do pacote `.sti`. Uma falha ao assinar ou verificar interrompe o build. Sem essas opções, o build continua disponível para desenvolvimento e informa explicitamente que não há assinatura Windows. A assinatura Ed25519 da release é mantida nos dois modos.
+Substitua os três valores de exemplo pelos dados reais. O agente é assinado e verificado antes de entrar no MSI; o MSI é assinado e verificado antes da geração dos hashes e do pacote `.sti`. Uma falha ao assinar ou verificar interrompe o build. Sem essas opções, o build continua disponível para desenvolvimento e informa explicitamente que não há assinatura Windows. A assinatura Ed25519 da release é mantida nos dois modos.
 
 Uma assinatura Authenticode não equivale a aprovação do Endpoint e não garante ausência de detecção. O projeto não desativa a proteção, instala certificados de confiança ou recria executáveis removidos pelo antivírus. Antes de distribuir automaticamente em produção, valide instalação, atualização e permanência do agente com a proteção ativa. Uma estação cujo agente foi removido precisa de uma nova instalação aceita pela política da empresa; o servidor não consegue atualizar um processo que não existe.
 
@@ -290,7 +227,7 @@ Referência: [SignTool e verificação Authenticode na documentação da Microso
 ### Distribuir pelo servidor STI
 
 1. Atualize primeiro o servidor, instale as dependências atualizadas (`pip install -r requirements.txt`) e reinicie-o. O upload usa Flask 3.1; a migração do banco é aditiva.
-2. Entre no painel e abra **Atualizações**. Importe `STI_Release_3.4.3.sti`; importar não inicia a distribuição.
+2. Entre no painel e abra **Atualizações**. Importe `STI_Release_3.5.0.sti`; importar não inicia a distribuição.
 3. Baixe o instalador pela lista de versões ou use o arquivo local e instale uma vez nas estações com agente antigo. Máquinas descobertas apenas por ping não podem receber instalação remota por este mecanismo.
 4. Nas próximas releases, selecione a versão e comece com **Grupo piloto**, escolhendo equipamentos pelo ID permanente. Depois de conferir o resultado, libere para **Todos os agentes**.
 5. Opcionalmente, defina início e fim da janela de horário. O painel mostra o horário do servidor; uma janela como `22:00–06:00` atravessa a meia-noite. Sem janela, a oferta pode ocorrer a qualquer horário.
@@ -300,9 +237,17 @@ A versão disponível é oferecida na resposta ao heartbeat existente. O agente 
 
 Quando o último estado recebido é download, instalação ou atualização concluída, mas não há mais comunicação recente, a tela mostra **Sem confirmação recente**. Ela conserva a última versão e o último resultado como histórico, sem afirmar que o processo continua instalado ou que uma instalação antiga ainda está em andamento. Esse estado tem filtro próprio; não identifica o motivo da perda de comunicação. Logs da estação e eventos do Endpoint continuam necessários para confirmar bloqueio ou remoção.
 
-Antes de trocar o executável, o agente valida assinatura, tamanho e SHA-256. Aguarda comandos em execução e resultados pendentes antes de atualizar. Um processo auxiliar troca o arquivo, inicia a nova versão e espera até **90 segundos** pela confirmação de comunicação com o servidor. Em caso de falha de inicialização ou ausência dessa confirmação, tenta restaurar e iniciar a versão anterior. Configuração, UUID e diário de comandos são preservados. A versão anterior fica em `previous-agent.exe`; pastas temporárias concluídas são limpas na próxima tentativa de atualização.
+O agente instalado por MSI usa o protocolo de atualização 2. Após receber uma oferta compatível, aguarda os comandos pendentes, valida a assinatura Ed25519, tamanho e SHA-256 do MSI e confere seu produto, versão e modo por usuário. O download usa somente o servidor configurado, com autenticação e sem seguir redirecionamentos. Ele solicita a instalação ao `msiexec.exe` e encerra sua execução para liberar os arquivos. O Windows Installer gerencia a transação, remove o MSI anterior e inicia o agente após a instalação. Não há cópia do próprio agente para `STI_Update.exe`, troca manual de binários ou backup `previous-agent.exe`.
 
-Falhas transitórias de download podem ser tentadas novamente após cinco minutos. Uma versão rejeitada por integridade ou recuperada após falha não fica sendo reinstalada em ciclo: corrija a release e publique outra versão, ou libere a distribuição novamente para autorizar uma nova tentativa. O estado fica em `%LOCALAPPDATA%\STI\update-state.json`, além do log do agente. Atualizações interrompidas por reinicialização são conferidas após a próxima comunicação.
+A primeira comunicação da nova versão confirma a atualização no painel. Uma falha na transação usa o rollback do Windows Installer; uma falha posterior de execução ou bloqueio do antivírus não é revertida automaticamente. Se o agente não voltar, consulte os logs da estação e faça o reparo manual com um MSI aceito pelo Endpoint. Se o Windows solicitar reinicialização, o estado fica adiado; o MSI não força o reinício.
+
+Releases antigas no formato 1 continuam disponíveis para agentes antigos. Uma release MSI (formato 2) só é oferecida aos agentes MSI. A migração inicial requer instalação manual uma vez. Não reutilize versões publicadas.
+
+Falhas transitórias de download podem ser tentadas novamente após cinco minutos. Falhas de integridade ou versões com instalação adiada não entram em ciclo: publique outra versão ou libere novamente a distribuição para autorizar nova tentativa. O estado fica em `%LOCALAPPDATA%\STI\update-state.json`; os pacotes e logs em `%LOCALAPPDATA%\STI\updates\<id>`. Os logs da última tentativa são mantidos para diagnóstico. Configuração e UUID continuam preservados.
+
+O MSI é um formato padrão de instalação, **não uma garantia de aceitação pelo Kaspersky**. O executável ainda precisa ser aceito pela proteção da empresa. Nenhuma proteção é desativada ou contornada pelo projeto.
+
+A remoção do produto anterior ocorre depois de instalar e validar o novo pacote, dentro da transação. Essa ordem usa componentes com identificadores estáveis e segue a sequência descrita pela [Microsoft para RemoveExistingProducts](https://learn.microsoft.com/en-us/windows/win32/msi/removeexistingproducts-action).
 
 ### Releases no GitHub
 
@@ -383,7 +328,7 @@ Quando o IP muda, o cadastro permanece na mesma identidade. Comandos pendentes s
 ### Atualização e migração
 
 1. Faça backup do `monitor.db` e atualize o servidor primeiro. A migração adiciona colunas e tabelas, preservando as tabelas existentes.
-2. Distribua o instalador V3.4 e importe a configuração de agente já utilizada, mantendo IP do servidor, token e permissões de energia. A rede padrão continua `10.2.116.0/22`.
+2. Distribua o MSI V3.5 e utilize a configuração de agente já utilizada, mantendo IP do servidor, token e permissões de energia. A rede padrão continua `10.2.116.0/22`.
 3. Preserve o arquivo `identity.db` nas atualizações. O primeiro envio do agente atualizado associa o cadastro legado do seu IP à identidade permanente. Antes desse primeiro envio, o inventário antigo só possui a associação por IP; confira o cadastro se houve troca de equipamento naquele endereço.
 4. Confirme o ID permanente, os MACs e a série no pop-up. Agentes antigos funcionam nos endereços ainda sem identidade permanente; um agente antigo é recusado em endereço já vinculado a uma identidade nova, para não sobrescrevê-la.
 
@@ -448,7 +393,7 @@ node --test tests/test_painel.cjs
 
 Os testes usam bancos temporários e não executam ações de energia. Foram validados: autenticação, isolamento por IP, faixas originais, métricas, migração do banco, concorrência da fila, transições, expiração, perda de confirmações, recuperação após reinício, CSV, histórico e escape de HTML. O cadastro tem testes de persistência após heartbeat, scanner e reinício, edição parcial, conflitos, filtros, grupos e preservação de campos durante edição. Também houve coleta real de hardware no Windows e teste do painel no Edge headless, com dados fictícios e scanner desativado.
 
-O módulo de releases cobre assinatura e adulteração, autenticação, isolamento do download, versões imutáveis, grupos, janelas atravessando a meia-noite, preservação da instalação, confirmação de saúde, retomada após download interrompido e recuperação da versão anterior. Foi realizada uma atualização real entre executáveis Windows `3.4.0 → 3.4.1`, preservando UUID e configuração, seguida de uma release inválida para confirmar a recuperação. Esses testes usaram diretórios temporários, sem registrar inicialização no Windows nem alterar agentes de produção. No Edge, foram verificados upload do pacote real, grupo piloto, suspensão, download do instalador e layout entre 360 e 1600 px.
+O módulo de releases cobre assinatura, adulteração, autenticação, versões imutáveis, grupos piloto e janelas de distribuição. Os testes MSI verificam o isolamento de protocolos, a validação de produto e versão, a preservação da configuração e a confirmação de atualização após comunicação com o servidor. O teste em uma estação piloto com o Kaspersky ativo continua necessário.
 
 Na V3.4.2, os testes adicionais verificam recusa de redirecionamentos 301/302/303/307/308 sem encaminhar token, encerramento limitado à instalação e conta corretas, fechamento manual de agentes portáteis, falha de inicialização sem falso sucesso e logs sem token. A gravação de JSON usa arquivo temporário exclusivo e repete a substituição por até três segundos em caso de bloqueio temporário do Windows. Também foram verificadas gravações concorrentes e instalação/reinstalação reais do executável V3.4.2 sem servidor disponível, preservando UUID e configuração.
 

@@ -40,9 +40,11 @@ def file_hash(path):
 def verify_manifest(envelope, public_key_file=None):
     try:
         manifest = envelope['manifest']
-        if not isinstance(manifest, dict) or manifest.get('format') != 1 or manifest.get('platform') != 'windows-x64':
+        if not isinstance(manifest, dict) or manifest.get('format') not in (1, 2) or manifest.get('platform') != 'windows-x64':
             raise ValueError('Formato de release incompatível.')
         version_tuple(manifest['version'])
+        if manifest['format'] == 2 and manifest.get('package') != manifest.get('installer'):
+            raise ValueError('A atualização MSI deve usar o próprio instalador.')
         for name, maximum in (('agent', MAX_BINARY), ('package', MAX_PACKAGE), ('installer', MAX_BINARY)):
             info = manifest[name]
             if (not isinstance(info, dict) or not isinstance(info.get('size'), int)
