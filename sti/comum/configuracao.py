@@ -3,9 +3,10 @@ import json
 import os
 import sys
 from pathlib import Path
+from sti.comum.empacotamento import is_bundled, executable_path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-BASE_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else PROJECT_ROOT
+BASE_DIR = executable_path().parent if is_bundled() else PROJECT_ROOT
 CONFIG_FILE = Path(os.environ.get("STI_CONFIG_FILE", str(BASE_DIR / "sti-config.json")))
 if CONFIG_FILE.exists():
     with CONFIG_FILE.open(encoding="utf-8-sig") as stream:

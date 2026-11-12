@@ -12,14 +12,35 @@ from pathlib import Path
 
 from sti.agente.instalacao import default_install_root, install_agent, remove_installation, validate_config, configure_install_logging
 from sti.comum.releases import atomic_json, verify_file
+from sti.comum.empacotamento import resource_directory, executable_path
 
 
 def resources():
-    base = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent)) / 'resources'
+    base = resource_directory(__file__) / 'resources'
     info = json.loads((base / 'setup-info.json').read_text(encoding='utf-8'))
     agent = base / 'STI_Agente.exe'
     verify_file(agent, info['agent'])
     return agent, info
+
+
+def inspect_ui():
+    """Verifica Tcl/Tk e widgets usados pelo Setup sem exibir ou instalar nada."""
+    import tkinter as tk
+    from tkinter import ttk
+    window = tk.Tk()
+    window.withdraw()
+    try:
+        frame = ttk.Frame(window)
+        frame.pack()
+        ttk.Label(frame, text='STI').pack()
+        ttk.Entry(frame, textvariable=tk.StringVar(master=window, value='test')).pack()
+        ttk.Checkbutton(frame, variable=tk.BooleanVar(master=window, value=False)).pack()
+        ttk.Button(frame, text='Test').pack()
+        window.update_idletasks()
+        return {'tk_version': str(window.tk.call('info', 'patchlevel')),
+                'theme': ttk.Style(window).theme_use(), 'widgets': True, 'window_shown': False}
+    finally:
+        window.destroy()
 
 
 def graphical_install(root):
@@ -92,7 +113,7 @@ def graphical_install(root):
 
         def worker():
             try:
-                install_agent(payload, root, info['version'], config, startup=start_at_login, setup_source=sys.executable)
+                install_agent(payload, root, info['version'], config, startup=start_at_login, setup_source=executable_path())
             except Exception as error:
                 logging.getLogger('STI_INSTALL').exception('Instalação não concluída.')
                 window.after(0, lambda text=str(error): finish(text))
@@ -124,12 +145,17 @@ def main():
     parser.add_argument('--uninstall', action='store_true')
     parser.add_argument('--remove-installed', action='store_true')
     parser.add_argument('--inspect', type=Path)
+    parser.add_argument('--check-ui', action='store_true', help='Com --inspect, verifica Tcl/Tk sem exibir a janela.')
     args = parser.parse_args()
+    if args.check_ui and not args.inspect:
+        parser.error('--check-ui exige --inspect com o caminho do relatório.')
     configure_install_logging()
     logging.getLogger('STI_INSTALL').info('Instalador aberto. silent=%s uninstall=%s', args.silent, args.uninstall)
     try:
         if args.inspect:
             _, info = resources()
+            if args.check_ui:
+                info['ui'] = inspect_ui()
             atomic_json(args.inspect, info)
         elif args.remove_installed:
             remove_installation(args.target)
@@ -138,7 +164,7 @@ def main():
             if not messagebox.askyesno('Desinstalar STI Agente', 'Remover o programa e a inicialização automática deste usuário? A configuração e a identidade serão mantidas.'):
                 return
             helper = Path(tempfile.mkdtemp(prefix='sti-uninstall-')) / 'STI_Uninstall.exe'
-            shutil.copyfile(sys.executable, helper)
+            shutil.copyfile(executable_path(), helper)
             subprocess.Popen([str(helper), '--remove-installed', '--target', str(args.target)],
                              creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         elif args.silent:
@@ -147,7 +173,7 @@ def main():
             payload, info = resources()
             config = validate_config(json.loads(args.config.read_text(encoding='utf-8-sig')))
             install_agent(payload, args.target, info['version'], config, startup=not args.no_startup,
-                          launch=not args.no_launch, setup_source=sys.executable)
+                          launch=not args.no_launch, setup_source=executable_path())
         else:
             graphical_install(args.target)
     except Exception as error:

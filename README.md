@@ -208,6 +208,40 @@ Ao exceder o prazo, o job passa para `expired`, libera a fila e registra que a e
 
 ## Gerar instalador e release
 
+### Prova experimental com Nuitka
+
+O fluxo de produção continua usando PyInstaller. O script `scripts/prova_nuitka.py` gera artefatos separados em `dist/compatibilidade/nuitka/<versão>/`, sem incrementar a versão, assinar ou importar releases e sem alterar configurações de antivírus. O perfil usa console visível para diagnóstico; não é uma release substituta da V3.4.3. Nuitka 4.3.5, Python 3.12 de 64 bits e as dependências de compilação ficam em `requirements/nuitka.txt`.
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements/nuitka.txt
+.\.venv\Scripts\python.exe scripts/prova_nuitka.py --component agente --mode standalone
+.\.venv\Scripts\python.exe scripts/verificar_nuitka.py --mode standalone
+```
+
+O primeiro build pode baixar MinGW64 e ferramentas auxiliares; os caches ficam em `build/nuitka-cache`. `--compiler msvc` seleciona um Visual C++ já instalado. O perfil limita a compilação a quatro tarefas e desabilita LTO para reduzir o tempo da prova; não é um comparativo de desempenho. O modo standalone precisa da pasta `.dist` completa, incluindo DLLs e chave pública, e não funciona distribuindo apenas o `.exe`.
+
+Nesta prova, o Nuitka avisou que as DLLs do Windows Runtime não foram incluídas. O piloto deve possuir o runtime Visual C++ x64 compatível; os downloads oficiais ficam na [documentação da Microsoft](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist). Esse requisito é separado do Python: o destino não precisa de Python instalado. A prova local não substitui um teste em uma estação limpa.
+
+Para avaliar a distribuição em arquivo único e o instalador atual:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/prova_nuitka.py --component agente --mode onefile
+.\.venv\Scripts\python.exe scripts/verificar_nuitka.py --mode both
+.\.venv\Scripts\python.exe scripts/prova_nuitka.py --component instalador --mode both
+```
+
+O instalador usa o agente onefile já compilado como payload, preservando o mecanismo de instalação existente. Compilar o instalador como standalone permite testar seus recursos e interface, mas os fluxos que copiam somente o executável (desinstalador e instalação do Setup local) exigem onefile. O verificador copia os artefatos para uma pasta temporária e executa `--check`, sem rede, sem registrar inicialização e sem substituir agentes reais. Os logs podem conter inventário do computador local; ficam em `.test-tmp` e não fazem parte da distribuição. O relatório registra explicitamente que não houve teste com o Kaspersky.
+
+No Setup, `--inspect caminho.json --check-ui` verifica o hash do payload e a inicialização de Tcl/Tk e dos widgets usados pelo instalador, sem exibir janela, instalar arquivos ou gravar startup. A detecção de empacotamento foi centralizada em `sti/comum/empacotamento.py`: PyInstaller usa `sys.frozen`/`_MEIPASS`, enquanto Nuitka usa `__compiled__` e `sys.argv[0]` para localizar o executável original no modo onefile.
+
+A prova local concluiu coleta e persistência de UUID nos modos standalone e onefile, leitura do JSON ao lado do executável a partir de outro diretório, validação do payload e Tcl/Tk nos dois modos do Setup, atualização real de PyInstaller 3.4.2 para Nuitka 3.4.3 e recuperação pelo helper Nuitka após uma atualização inválida. Um build PyInstaller de regressão também iniciou e preservou configuração e identidade. Os testes usaram servidor local e pastas temporárias, sem registrar startup. Não foram validados o Kaspersky, a implantação em uma estação limpa ou uma desinstalação real do pacote Nuitka.
+
+O ZIP `STI_Nuitka_POC_3.4.3.zip`, em `dist/compatibilidade/nuitka/3.4.3/`, contém os executáveis onefile, instruções e resultados. Ele não é um pacote `.sti` para importar no painel. A prova mantém a versão 3.4.3 para comparação; uma futura release de produção com Nuitka precisa de outro número e da assinatura STI original. A release PyInstaller já publicada permanece imutável.
+
+Referências: [Nuitka: detecção de compilação](https://nuitka.net/user-documentation/tips.html) e [validação inicial em standalone](https://nuitka.net/user-documentation/tutorial-setup-and-build.html).
+
+### Build de produção com PyInstaller
+
 No Windows, com Python 3.12 de 64 bits:
 
 ```powershell
