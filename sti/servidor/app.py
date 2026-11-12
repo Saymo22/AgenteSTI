@@ -1486,7 +1486,7 @@ def api_agent():
             }
             write_device(conn, ip, device)
             releases.record_heartbeat(conn, device.get('device_id'), device['agent_version'], update_report)
-            update = releases.update_offer(conn, device.get('device_id'), device['agent_version'], update_report[0])
+            update = releases.update_offer(conn, device.get('device_id'), device['agent_version'], update_report[0], data.get('update_protocol', 1))
         if registration and registration['previous_ip'] != ip:
             previous_ip = registration['previous_ip']
             if devices.get(previous_ip, {}).get('device_id') == device['device_id']:

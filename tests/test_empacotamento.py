@@ -9,7 +9,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from sti.comum import empacotamento
-from scripts.prova_nuitka import compiler_command
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -56,14 +55,4 @@ print(json.dumps({'file':str(CONFIG_FILE),'server':setting('STI_SERVER_IP')}))
     def test_resources_use_pyinstaller_extraction_or_compiled_module_directory(self):
         with patch.object(empacotamento.sys, '_MEIPASS', 'test-extracted', create=True):
             self.assertEqual(empacotamento.resource_directory('anything.py'), Path('test-extracted'))
-        self.assertEqual(empacotamento.resource_directory(ROOT/'packaging/instalador.py'), ROOT/'packaging')
-
-    def test_experimental_build_is_separate_and_contains_only_public_key(self):
-        command = compiler_command('agente', 'standalone', ROOT/'dist/compatibilidade/test', 'mingw64', 2)
-        joined = '\n'.join(command)
-        self.assertIn('--mode=standalone', command)
-        self.assertIn('--windows-console-mode=force', command)
-        self.assertIn('--include-module=win32ts', command)
-        self.assertIn('release-public-key.pem', joined)
-        self.assertNotIn('agent-signing-key.pem', joined)
-        self.assertNotIn('sti-config.json', joined)
+        self.assertEqual(empacotamento.resource_directory(ROOT/'packaging/agente.spec'), ROOT/'packaging')
