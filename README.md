@@ -226,6 +226,8 @@ Referência: [SignTool e verificação Authenticode na documentação da Microso
 
 ### Distribuir pelo servidor STI
 
+A lista mantém somente as **duas versões de maior número**. Após publicar outra release, o servidor remove os pacotes antigos do disco. A versão liberada na política atual e os alvos com download, instalação ou reinicialização pendente informados na última hora são preservados; a limpeza é repetida nas próximas publicações e ao liberar ou suspender uma distribuição. Os manifestos pequenos continuam no banco para impedir reutilizar uma versão com conteúdo diferente. Essa retenção vale para o servidor STI, sem alterar releases no GitHub nem arquivos locais em `dist/`.
+
 1. Atualize primeiro o servidor, instale as dependências atualizadas (`pip install -r requirements.txt`) e reinicie-o. O upload usa Flask 3.1; a migração do banco é aditiva.
 2. Entre no painel e abra **Atualizações**. Importe `STI_Release_3.5.0.sti`; importar não inicia a distribuição.
 3. Baixe o instalador pela lista de versões ou use o arquivo local e instale uma vez nas estações com agente antigo. Máquinas descobertas apenas por ping não podem receber instalação remota por este mecanismo.
@@ -260,6 +262,8 @@ O funcionamento interno não depende de uma release no GitHub. Para publicar os 
 Essa opção cria a tag/release `v<versão>` no commit atual e envia o instalador, o pacote `.sti` e o manifesto. Não reutilize um número já publicado. Publicar o código com `git push` não envia os executáveis e não ativa distribuição nas estações. A integração com GitHub CLI exige credenciais locais e não foi executada nesta entrega.
 
 ## Acabamento visual do painel
+
+O **Modo TV** inclui relógio com segundos e data, indicadores compactos e disponibilidade em uma faixa acima das máquinas. Oculta filtros e Segmentos e usa toda a largura para cards menores com nome, IP, status, sistema, usuário e latência. Mostra a rede inteira, mesmo que existam filtros no administrador; ao sair, restaura a visualização e os filtros anteriores. Use **Sair do modo TV** ou saia da tela cheia com `Esc`. Se o navegador não permitir tela cheia, o layout TV continua disponível pelo botão. Essa mudança só exige atualizar o servidor, sem reinstalar agentes.
 
 O painel mantém a composição original: identificação STI e relógio à esquerda, indicadores no topo, cartões de máquinas no centro e saúde da rede à direita.
 

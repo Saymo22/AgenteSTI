@@ -1448,3 +1448,87 @@
 .organization-summary dd { margin: 0; overflow-wrap: anywhere; }
 .device-group-heading { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 10px; padding: 14px 0; border-bottom: 1px solid var(--stroke); overflow-wrap: anywhere; }
 .device-group-heading span { color: var(--muted); font-size: .85rem; font-weight: 500; }
+
+/* TV: foco no monitoramento, sem controles de administração. */
+.tv-toolbar, .tv-health-slot { display: none; }
+body.kiosk .layout { padding: 16px; gap: 0; }
+body.kiosk .content { padding: 0; min-height: 100vh; }
+body.kiosk .content-scroll { padding: 0; }
+body.kiosk .tv-toolbar { display: flex; align-items: center; gap: 24px; margin-bottom: 14px; }
+.tv-heading { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.tv-heading strong { display: block; font-size: 1.1rem; letter-spacing: -.02em; }
+.tv-heading span:not(.tv-live-dot) { display: block; margin-top: 4px; color: var(--muted); font-size: .78rem; }
+.tv-live-dot { width: 9px; height: 9px; flex-shrink: 0; border-radius: 50%; background: var(--green); box-shadow: 0 0 18px var(--green-soft); }
+.tv-clock { margin-left: auto; text-align: right; }
+.tv-clock time { display: block; font-family: 'JetBrains Mono', monospace; font-size: clamp(1.6rem, 2.4vw, 2.6rem); font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; color: #e4fff6; }
+.tv-clock span { display: block; color: var(--muted); font-size: .75rem; margin-top: 4px; }
+.tv-exit { font-size: .75rem; padding: 10px 12px; min-height: 38px; }
+.tv-exit svg { width: 15px; height: 15px; }
+body.kiosk .metrics-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+body.kiosk .metric-card { min-height: 0; padding: 14px 18px; display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; cursor: default; pointer-events: none; }
+body.kiosk .metric-top { margin: 0; }
+body.kiosk .metric-icon, body.kiosk .metric-sub { display: none; }
+body.kiosk .metric-label { font-size: .7rem; }
+body.kiosk .metric-value { margin-top: 0; font-size: 1.8rem; text-align: right; }
+body.kiosk .overview-grid { grid-template-columns: minmax(0, 1fr) !important; gap: 0; }
+body.kiosk .overview-side-stack,
+body.kiosk .organization-filters,
+body.kiosk .devices-head .status-legend,
+body.kiosk .devices-head p { display: none !important; }
+body.kiosk .devices-panel { grid-row: auto; padding: 16px; min-height: 0; }
+body.kiosk .devices-head { margin-bottom: 10px; }
+body.kiosk .devices-head h3 { font-size: .95rem; }
+body.kiosk .tv-health-slot { display: block; margin-bottom: 14px; }
+body.kiosk .network-health-panel { display: grid; grid-template-columns: 180px minmax(0, 1fr); align-items: center; gap: 18px; padding: 10px 16px; border-radius: 14px; box-shadow: none; }
+body.kiosk .network-health-panel .panel-head { margin: 0; display: flex; align-items: flex-start; flex-direction: column; gap: 8px; }
+body.kiosk .network-health-panel h3 { font-size: .85rem; }
+body.kiosk .network-health-panel .panel-head p { display: none; }
+body.kiosk .network-health-panel .status-badge { padding: 4px 8px; font-size: .57rem; }
+body.kiosk .health-grid { display: grid; grid-template-columns: 66px minmax(0, 1fr); gap: 22px; align-items: center; }
+body.kiosk .health-circle { width: 66px; height: 66px; margin: 0; }
+body.kiosk .health-circle::after { width: 50px; height: 50px; }
+body.kiosk .health-inner strong { font-size: 1rem; }
+body.kiosk .health-inner span { display: none; }
+body.kiosk .health-bars { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+body.kiosk .health-row { gap: 7px; }
+body.kiosk .health-top-line { font-size: .75rem; gap: 8px; }
+body.kiosk .bar-track { height: 6px; }
+body.kiosk .devices-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 12px; align-items: stretch; }
+body.kiosk .device-card { padding: 13px 14px; gap: 9px; border-radius: 16px; align-content: start; }
+body.kiosk .device-card:hover { transform: none; }
+body.kiosk .device-head { gap: 8px; align-items: center; }
+body.kiosk .device-head > div { gap: 8px !important; }
+body.kiosk .device-os { width: 32px; height: 32px; min-width: 32px; border-radius: 10px; }
+body.kiosk .device-os svg { width: 19px; height: 19px; }
+body.kiosk .device-title strong { font-size: .83rem; line-height: 1.25; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+body.kiosk .device-title .identity-source,
+body.kiosk .device-platform-tag,
+body.kiosk .device-identity-tag,
+body.kiosk .organization-summary,
+body.kiosk .device-info .info-row:nth-child(3),
+body.kiosk .device-footer { display: none; }
+body.kiosk .device-head .status-badge { font-size: .55rem; padding: 5px 7px; gap: 4px; letter-spacing: .02em; white-space: nowrap; flex-shrink: 0; }
+body.kiosk .status-badge::before { width: 5px; height: 5px; }
+body.kiosk .device-address { padding: 7px 9px; font-size: .86rem; border-radius: 9px; }
+body.kiosk .device-address small { font-size: .55rem; }
+body.kiosk .device-info { grid-template-columns: minmax(0, 1fr) 78px; gap: 6px; }
+body.kiosk .info-row { padding: 6px 8px; gap: 3px; min-width: 0; border-radius: 9px; }
+body.kiosk .info-head { min-height: 0; align-items: center; line-height: 1.3; font-size: .57rem; letter-spacing: 0; gap: 5px; text-transform: none; }
+body.kiosk .info-head svg { width: 11px; height: 11px; }
+body.kiosk .info-value { font-size: .72rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+body.kiosk .device-info .info-row:nth-child(1) { grid-column: 1; grid-row: 1; }
+body.kiosk .device-info .info-row:nth-child(2) { grid-column: 1; grid-row: 2; }
+body.kiosk .device-info .info-row:nth-child(4) { grid-column: 2; grid-row: 1 / 3; align-content: center; }
+body.kiosk .latency-value { font-size: .95rem; }
+body.kiosk .latency-value.offline { white-space: normal; font-size: .75rem; }
+@media (max-width: 700px) {
+  body.kiosk .layout { padding: 10px; }
+  body.kiosk .tv-toolbar { flex-wrap: wrap; gap: 12px; }
+  body.kiosk .tv-exit { margin-left: auto; }
+  body.kiosk .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  body.kiosk .network-health-panel { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  body.kiosk .network-health-panel .panel-head { flex-direction: row; align-items: center; justify-content: space-between; }
+  body.kiosk .health-grid { gap: 12px; }
+  body.kiosk .health-bars { gap: 10px; }
+  body.kiosk .health-top-line { flex-wrap: wrap; font-size: .65rem; }
+}

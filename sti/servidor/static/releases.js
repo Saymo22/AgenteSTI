@@ -37,7 +37,8 @@ function renderReleaseSettings() {
   const version = document.getElementById('releaseVersion');
   const selected = version.value;
   version.innerHTML = '<option value="">Selecione uma release</option>' + releaseState.releases.map(item => `<option value="${escapeHtml(item.version)}">${escapeHtml(item.version)}</option>`).join('');
-  version.value = selected || releaseState.policy?.version || releaseState.releases[0]?.version || '';
+  const visibleVersions = new Set(releaseState.releases.map(item => item.version));
+  version.value = [selected, releaseState.policy?.version, releaseState.releases[0]?.version].find(item => visibleVersions.has(item)) || '';
   const targets = document.getElementById('releaseTargets');
   const selectedIds = new Set(releaseState.editing ? [...targets.selectedOptions].map(item => item.value) : releaseState.policy?.device_ids || []);
   targets.innerHTML = state.devices.filter(device => device.device_id).map(device => `<option value="${escapeHtml(device.device_id)}"${selectedIds.has(device.device_id) ? ' selected' : ''}>${escapeHtml(device.name || device.ip)} · ${escapeHtml(device.ip)}</option>`).join('');
@@ -112,7 +113,7 @@ async function uploadRelease(event) {
     document.getElementById('releaseBundle').value = '';
     releaseState.editing = true;
     await loadReleases();
-    document.getElementById('releaseVersion').value = data.version;
+    if (releaseState.releases.some(item => item.version === data.version)) document.getElementById('releaseVersion').value = data.version;
     document.getElementById('releaseFeedback').textContent = `Release ${data.version} publicada. Escolha os equipamentos e libere a distribuição.`;
   } catch (error) { document.getElementById('releaseFeedback').textContent = error.message; }
   finally { button.disabled = false; }

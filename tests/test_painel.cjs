@@ -4,6 +4,57 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+test('modo TV mostra toda a rede e restaura os filtros ao sair', () => {
+  const {run}=loadPanel();
+  run(`state.devices=[{ip:'10.2.116.1',online:true,name:'PC-A'},{ip:'10.2.117.2',online:false,name:'PC-B'}];
+       state.search='PC-A';state.statusFilter='online';state.currentView='116';
+       state.organizationFilters.department='Informática';state.kiosk=true;`);
+  assert.equal(run('getFilteredDevices().length'),2);
+  run("setStatusFilter('offline')");
+  assert.equal(run('state.statusFilter'),'online');
+  run(`state.kiosk=false;state.organizationFilters.department='';`);
+  assert.equal(run('getFilteredDevices().length'),1);
+  assert.equal(run('state.search'),'PC-A');
+  assert.equal(run('state.statusFilter'),'online');
+});
+
+test('modo TV move a disponibilidade e funciona mesmo sem permissão de tela cheia', async () => {
+  const {run,nodes}=loadPanel();
+  run(`document.body.classList.toggle=()=>{};
+       switchView=view=>{state.currentView=view};updateClock=()=>{};showToast=()=>{};addEventLog=()=>{};
+       document.documentElement={requestFullscreen:async()=>{throw new Error('Tela cheia bloqueada')}};
+       document.getElementById('tvHealthSlot').appendChild=child=>{document.getElementById('tvHealthSlot').moved=child};
+       document.getElementById('overviewSideStack').insertBefore=child=>{document.getElementById('overviewSideStack').moved=child};
+       state.currentView='117';`);
+  await run('toggleKiosk()');
+  assert.equal(run('state.kiosk'),true);
+  assert.equal(run('state.currentView'),'overview');
+  assert.equal(nodes.get('tvHealthSlot').moved,nodes.get('networkHealthPanel'));
+  await run('toggleKiosk()');
+  assert.equal(run('state.kiosk'),false);
+  assert.equal(run('state.currentView'),'117');
+  assert.equal(nodes.get('overviewSideStack').moved,nodes.get('networkHealthPanel'));
+});
+
+test('relógio do modo TV acompanha o relógio do painel com data e segundos', () => {
+  const {run,nodes}=loadPanel();
+  run('updateClock()');
+  assert.match(nodes.get('tvLiveTime').textContent,/^\d{2}:\d{2}:\d{2}$/);
+  assert.equal(nodes.get('tvLiveTime').textContent,nodes.get('liveTime').textContent);
+  assert.ok(Number.isFinite(Date.parse(nodes.get('tvLiveTime').dateTime)));
+  assert.ok(nodes.get('tvLiveDate').textContent.length>10);
+});
+
+test('Escape sai do modo TV sem tela cheia e busca oculta não recebe foco', () => {
+  const {run,nodes}=loadPanel();
+  run(`state.kiosk=true;globalThis.exited=false;setKioskMode=enabled=>{exited=!enabled};
+       globalThis.prevented=false;document.getElementById('searchInput').focus=()=>{throw new Error('Busca oculta recebeu foco')};
+       handlePremiumKeys({key:'/',target:{tagName:'BODY'},preventDefault(){}});
+       handlePremiumKeys({key:'Escape',preventDefault(){prevented=true}});`);
+  assert.equal(run('exited'),true);
+  assert.equal(run('prevented'),true);
+});
+
 function loadPanel() {
   const nodes = new Map();
   const context = vm.createContext({
@@ -394,6 +445,18 @@ test('remapeamento reinicia detecção dos IPs sem agente sem criar notificaçõ
        processStatusChanges([{ip:'10.2.116.1',online:true},{device_id:'agente',ip:'10.2.116.2',online:true}]);`);
   assert.equal(run('state.notifications.length'),0);
   assert.equal(run('state.previousStatus.agente'),true);
+});
+
+test('lista de releases mantém seleção válida quando a versão antiga sai da lista', () => {
+  const {run,nodes}=loadPanel();
+  run(`releaseState.releases=[{version:'3.5.1',installer_url:'/new'},{version:'3.5.0',installer_url:'/previous'}];
+       releaseState.policy={version:'3.4.3',scope:'all',device_ids:[]};
+       document.getElementById('releaseVersion').value='3.4.3';renderReleaseSettings();`);
+  assert.equal(nodes.get('releaseVersion').value,'3.5.1');
+  assert.equal((nodes.get('releaseList').innerHTML.match(/class="release-entry"/g)||[]).length,2);
+  assert.match(nodes.get('releaseActivePolicy').textContent,/3\.4\.3/);
+  run(`document.getElementById('releaseVersion').value='3.5.0';renderReleaseSettings();`);
+  assert.equal(nodes.get('releaseVersion').value,'3.5.0');
 });
 
 test('controle de versões distingue versão atual, inicialização manual, grupo e recuperação', () => {
