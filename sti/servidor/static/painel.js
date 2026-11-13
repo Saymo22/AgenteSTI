@@ -1,6 +1,9 @@
 const state = {
       devices: [],
       currentView: 'overview',
+      kiosk: false,
+      kioskPreviousView: 'overview',
+      kioskFullscreen: false,
       search: '',
       statusFilter: 'all',
       connected: false,
@@ -153,6 +156,10 @@ function init() {
       document.getElementById('btnScan').addEventListener('click', scanNetwork);
       document.getElementById('btnRemap').addEventListener('click', remapNetwork);
       document.getElementById('btnTv').addEventListener('click', toggleKiosk);
+      document.getElementById('exitTv').addEventListener('click', toggleKiosk);
+      document.addEventListener('fullscreenchange', () => {
+        if (state.kiosk && state.kioskFullscreen && !document.fullscreenElement) setKioskMode(false);
+      });
       document.getElementById('modalClose').addEventListener('click', closeModal);
       el.deviceModalOverlay.addEventListener('click', (e) => { if (e.target === el.deviceModalOverlay) closeModal(); });
       document.getElementById('btnRestart').addEventListener('click', () => sendCommand('restart'));
@@ -203,6 +210,12 @@ function init() {
       const now = new Date();
       document.getElementById('liveTime').textContent = now.toLocaleTimeString('pt-BR');
       document.getElementById('liveDate').textContent = now.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+      const tvTime = document.getElementById('tvLiveTime');
+      if (tvTime) {
+        tvTime.textContent = now.toLocaleTimeString('pt-BR', {hour12: false});
+        tvTime.dateTime = now.toISOString();
+        document.getElementById('tvLiveDate').textContent = now.toLocaleDateString('pt-BR', {weekday: 'long', day: '2-digit', month: 'long'});
+      }
     }
 
     function switchView(view) {
@@ -569,6 +582,7 @@ function renderLogs() {
     }
 
     function getFilteredDevices() {
+      if (state.kiosk) return [...state.devices].sort((a, b) => statusRank(a) - statusRank(b) || String(a.ip).localeCompare(String(b.ip), undefined, {numeric: true}));
       let devices = state.devices.filter(device => matchesStatus(device, state.statusFilter));
       if (['116','117','118','119'].includes(state.currentView)) {
         devices = devices.filter(d => String(d.ip || '').startsWith(`10.2.${state.currentView}.`));
@@ -633,8 +647,9 @@ function renderLogs() {
         el.devicesGrid.innerHTML = `<div class="empty-state">Nenhum dispositivo encontrado para esse filtro.</div>`;
         return;
       }
-      el.devicesGrid.innerHTML = groupDevices(devices, state.groupBy).map(group =>
-        `${state.groupBy ? `<h3 class="device-group-heading">${escapeHtml(group.label)}<span>${group.devices.length} máquinas</span></h3>` : ''}${group.devices.map(createDeviceCard).join('')}`
+      const groupBy = state.kiosk ? '' : state.groupBy;
+      el.devicesGrid.innerHTML = groupDevices(devices, groupBy).map(group =>
+        `${groupBy ? `<h3 class="device-group-heading">${escapeHtml(group.label)}<span>${group.devices.length} máquinas</span></h3>` : ''}${group.devices.map(createDeviceCard).join('')}`
       ).join('');
       document.querySelectorAll('.device-card').forEach(card => {
         card.addEventListener('click', () => openModal(card.dataset.reference));
@@ -666,11 +681,11 @@ function renderLogs() {
           <div class="device-info">
             <div class="info-row">
               <div class="info-head">${icons.chip}<span>Sistema / tipo</span></div>
-              <div class="info-value ${identity.osKnown ? '' : 'data-missing'}">${escapeHtml(identity.os)}</div>
+              <div class="info-value ${identity.osKnown ? '' : 'data-missing'}" title="${escapeHtml(identity.os)}">${escapeHtml(identity.os)}</div>
             </div>
             <div class="info-row">
               <div class="info-head">${icons.user}<span>${device.agent_online ? 'Usuário conectado' : 'Último usuário informado'}</span></div>
-              <div class="info-value ${identity.userKnown ? '' : 'data-missing'}">${escapeHtml(identity.user)}</div>
+              <div class="info-value ${identity.userKnown ? '' : 'data-missing'}" title="${escapeHtml(identity.user)}">${escapeHtml(identity.user)}</div>
             </div>
             <div class="info-row">
               <div class="info-head">${uiIcon('monitor')}<span>Agente STI</span></div>
@@ -1151,17 +1166,36 @@ function renderLogs() {
       addEventLog('success', 'Exportação CSV', `Exportação realizada com ${devices.length} registros.`, new Date());
     }
 
-    function toggleKiosk() {
-      document.body.classList.toggle('kiosk');
-      if (document.body.classList.contains('kiosk')) {
-        if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen();
-        showToast('Modo TV ativado.');
-        addEventLog('info', 'Modo TV', 'Modo TV ativado.', new Date());
-      } else {
-        if (document.exitFullscreen) document.exitFullscreen();
-        showToast('Modo TV desativado.');
-        addEventLog('info', 'Modo TV', 'Modo TV desativado.', new Date());
+    function setKioskMode(enabled) {
+      if (state.kiosk === enabled) return;
+      if (enabled) state.kioskPreviousView = state.currentView;
+      state.kiosk = enabled;
+      state.kioskFullscreen = false;
+      document.body.classList.toggle('kiosk', enabled);
+      document.getElementById('btnTv').setAttribute('aria-pressed', String(enabled));
+      const health = document.getElementById('networkHealthPanel');
+      if (enabled) document.getElementById('tvHealthSlot').appendChild(health);
+      else {
+        const home = document.getElementById('overviewSideStack');
+        home.insertBefore(health, home.firstChild);
       }
+      switchView(enabled ? 'overview' : state.kioskPreviousView);
+      updateClock();
+      if (enabled) document.getElementById('exitTv').focus({preventScroll: true});
+      else document.getElementById('btnTv').focus({preventScroll: true});
+    }
+
+    async function toggleKiosk() {
+      const enabled = !state.kiosk;
+      setKioskMode(enabled);
+      try {
+        if (enabled && document.documentElement.requestFullscreen) {
+          await document.documentElement.requestFullscreen();
+          state.kioskFullscreen = state.kiosk && Boolean(document.fullscreenElement);
+        } else if (!enabled && document.fullscreenElement && document.exitFullscreen) await document.exitFullscreen();
+      } catch (_) { /* O layout TV também funciona quando o navegador não permite tela cheia. */ }
+      showToast(enabled ? 'Modo TV ativado.' : 'Modo TV desativado.');
+      addEventLog('info', 'Modo TV', enabled ? 'Modo TV ativado.' : 'Modo TV desativado.', new Date());
     }
 
 
@@ -1630,6 +1664,7 @@ function initNotifications() {
       });
     }
     function setStatusFilter(status) {
+      if (state.kiosk) return;
       state.statusFilter = ['all','online','offline','attention'].includes(status) ? status : 'all';
       syncStatusFilters();
       renderDevices();
@@ -1670,6 +1705,13 @@ function initNotifications() {
           const first = elements[0], last = elements[elements.length-1];
           if (event.shiftKey && (document.activeElement === first || document.activeElement.id === 'machineDialog')) { event.preventDefault(); last?.focus(); }
           else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+        }
+        return;
+      }
+      if (state.kiosk) {
+        if (event.key === 'Escape' && !document.fullscreenElement) {
+          event.preventDefault();
+          setKioskMode(false);
         }
         return;
       }

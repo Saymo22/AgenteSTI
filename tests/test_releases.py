@@ -5,7 +5,7 @@ import os
 import uuid
 import unittest
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch, Mock
 
@@ -52,6 +52,82 @@ class ReleaseTests(unittest.TestCase):
 
     def heartbeat(self, **extra):
         return fixtures.IntegrationTests.heartbeat(self, {**self.payload, **extra})
+
+    def test_retention_lists_two_numeric_versions_and_removes_old_packages(self):
+        for version in ('3.4.9', '3.4.10', '3.5.0'):
+            self.publish(version)
+        listed = self.client.get('/api/releases').json['releases']
+        self.assertEqual([item['version'] for item in listed], ['3.5.0', '3.4.10'])
+        root = releases.storage_path(server.DB_FILE)
+        self.assertFalse((root/'3.4.9').exists())
+        self.assertTrue((root/'3.4.10/installer.exe').is_file())
+        self.assertTrue((root/'3.5.0/agent.zip').is_file())
+        self.assertEqual(self.client.get('/api/releases/3.4.9/installer').status_code, 404)
+        self.assertEqual(self.client.post('/api/releases/activate', json={'version': '3.4.9'}).status_code, 410)
+        # A remoção dos pacotes não permite reutilizar um número já assinado.
+        bundle, _ = self.bundle('3.4.9', content=b'MZ-changed-retired-release')
+        response = self.client.post('/api/releases', data={'release': (io.BytesIO(bundle.read_bytes()), 'release.sti')})
+        self.assertEqual(response.status_code, 400)
+
+    def test_retention_preserves_active_distribution_until_paused(self):
+        self.publish('3.4.1')
+        self.client.post('/api/releases/activate', json={'version': '3.4.1'})
+        self.publish('3.4.2')
+        self.publish('3.5.0')
+        root = releases.storage_path(server.DB_FILE)
+        self.assertEqual(len(self.client.get('/api/releases').json['releases']), 2)
+        download = self.client.get('/api/releases/3.4.1/installer')
+        self.assertEqual(download.status_code, 200)
+        download.close()
+        self.assertEqual(self.heartbeat().json['update']['release']['manifest']['version'], '3.4.1')
+        self.client.post('/api/releases/pause')
+        self.assertFalse((root/'3.4.1').exists())
+
+    def test_retention_preserves_recent_update_then_cleans_expired_attempt(self):
+        self.publish('3.4.1')
+        self.heartbeat(update_status={'status': 'downloading', 'target_version': '3.4.1'})
+        self.publish('3.4.2')
+        self.publish('3.5.0')
+        root = releases.storage_path(server.DB_FILE)
+        self.assertTrue((root/'3.4.1/agent.zip').is_file())
+        with server.db_connect() as conn:
+            conn.execute('UPDATE agent_update_state SET updated_at=?', ((datetime.now()-timedelta(hours=2)).isoformat(),))
+        self.client.post('/api/releases/pause')
+        self.assertFalse((root/'3.4.1').exists())
+
+    def test_retention_does_not_follow_symlinks_or_remove_unknown_files(self):
+        self.publish('3.4.1')
+        root = releases.storage_path(server.DB_FILE)
+        unrelated = root/'3.4.1/keep.txt'
+        unrelated.write_text('Arquivo fora do pacote')
+        self.publish('3.4.2')
+        self.publish('3.5.0')
+        self.assertTrue(unrelated.is_file())
+        self.assertFalse((root/'3.4.1/agent.zip').exists())
+        external = self.folder/'external'
+        external.mkdir()
+        (external/'installer.exe').write_bytes(b'unrelated')
+        folder = root/'3.4.1'
+        with patch.object(Path, 'resolve', autospec=True, side_effect=lambda path: external if path == folder else path.absolute()):
+            with server.db_connect() as conn:
+                releases.prune_release_files(conn, root)
+        self.assertEqual((external/'installer.exe').read_bytes(), b'unrelated')
+
+    def test_locked_old_package_does_not_fail_publication_and_cleanup_can_retry(self):
+        self.publish('3.4.1')
+        self.publish('3.4.2')
+        root = releases.storage_path(server.DB_FILE)
+        original_unlink = Path.unlink
+        def locked_unlink(path, *args, **kwargs):
+            if path == root/'3.4.1/installer.exe':
+                raise PermissionError('Download aberto no Windows')
+            return original_unlink(path, *args, **kwargs)
+        with patch.object(Path, 'unlink', locked_unlink), self.assertLogs(releases.logger, level='WARNING'):
+            self.publish('3.5.0')
+        self.assertEqual(len(self.client.get('/api/releases').json['releases']), 2)
+        self.assertTrue((root/'3.4.1/installer.exe').is_file())
+        self.client.post('/api/releases/pause')
+        self.assertFalse((root/'3.4.1').exists())
 
 
     def test_signed_publication_policy_heartbeat_download_and_pause(self):

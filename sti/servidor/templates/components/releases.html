@@ -12,6 +12,7 @@
           <label for="releaseBundle">Pacote assinado (.sti)<input id="releaseBundle" type="file" accept=".sti,.zip" required></label>
           <button type="submit" class="tool-btn" id="uploadReleaseButton">{{ icon('download') }} Enviar release</button>
         </form>
+        <p class="release-help">As duas versões mais recentes ficam disponíveis. Ao publicar outra, os pacotes antigos são removidos automaticamente; arquivos ainda em distribuição são preservados.</p>
         <div id="releaseList" class="release-list"></div>
       </article>
       <article class="panel">

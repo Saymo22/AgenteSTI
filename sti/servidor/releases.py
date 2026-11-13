@@ -1,11 +1,12 @@
 """Publicação autenticada de releases assinadas e política de distribuição."""
 import json
+import logging
 import shutil
 import tempfile
 import threading
 import uuid
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from flask import jsonify, request, send_file
@@ -16,6 +17,51 @@ from sti.comum.versao import AGENT_VERSION
 
 publication_lock = threading.Lock()
 UPDATE_STATUSES = {'idle', 'downloading', 'installing', 'updated', 'failed', 'rolled_back', 'deferred'}
+RELEASE_LIMIT = 2
+logger = logging.getLogger(__name__)
+
+
+def latest_releases(conn):
+    rows = conn.execute('SELECT version,envelope,created_at FROM agent_releases').fetchall()
+    return sorted(rows, key=lambda row: version_tuple(row[0]), reverse=True)[:RELEASE_LIMIT]
+
+
+def prune_release_files(conn, root, now=None):
+    """Remove somente pacotes conhecidos; preserva ofertas ativas e transferências recentes."""
+    keep = {row[0] for row in latest_releases(conn)}
+    policy = load_policy(conn)
+    if policy:
+        keep.add(policy['version'])
+    cutoff = ((now or datetime.now()) - timedelta(hours=1)).isoformat()
+    keep.update(row[0] for row in conn.execute('''SELECT target_version FROM agent_update_state
+        WHERE status IN ('downloading','installing','deferred') AND updated_at >= ?''', (cutoff,)))
+    root = Path(root).resolve()
+    removed = []
+    for (version,) in conn.execute('SELECT version FROM agent_releases').fetchall():
+        if version in keep:
+            continue
+        version_tuple(version)
+        folder = root / version
+        # Sem exclusão recursiva, travessia de links ou remoção de dados alheios à release.
+        if (folder.is_symlink() or folder.resolve() != folder or folder.resolve().parent != root
+                or not folder.is_dir()):
+            continue
+        deleted = False
+        try:
+            for name in ('installer.msi', 'installer.exe', 'agent.zip'):
+                path = folder / name
+                if path.is_file() and not path.is_symlink():
+                    path.unlink()
+                    deleted = True
+            if not any(folder.iterdir()):
+                folder.rmdir()
+        except OSError:
+            # Um download aberto no Windows pode manter o arquivo bloqueado; tentar novamente depois.
+            logger.warning('Limpeza da release %s adiada; arquivo em uso ou sem permissão.', version)
+        if deleted:
+            removed.append(version)
+    # Os manifestos permanecem no banco para impedir reutilização de versões com outro conteúdo.
+    return removed
 
 
 def init_schema(conn):
@@ -148,14 +194,21 @@ def import_bundle(bundle, root, conn):
 
 
 def register_routes(app, require_admin, db_connect, get_db_file, agent_authenticated, valid_ip):
+    def cleanup_releases():
+        try:
+            with publication_lock, db_connect() as conn:
+                conn.execute('BEGIN IMMEDIATE')
+                prune_release_files(conn, storage_path(get_db_file()))
+        except OSError:
+            logger.warning('Limpeza de releases adiada; será repetida na próxima publicação.')
+
     @app.get('/api/releases')
     @require_admin
     def list_releases():
         with db_connect() as conn:
-            rows = conn.execute('SELECT version,envelope,created_at FROM agent_releases').fetchall()
+            rows = latest_releases(conn)
             states = conn.execute('SELECT * FROM agent_update_state').fetchall()
             policy = load_policy(conn)
-        rows.sort(key=lambda row: version_tuple(row[0]), reverse=True)
         return jsonify(ok=True, releases=[{'version': version, 'notes': json.loads(envelope)['manifest'].get('notes', ''),
             'created_at': created, 'installer_url': f'/api/releases/{version}/installer'} for version, envelope, created in rows],
             policy=policy, build_version=AGENT_VERSION, server_time=datetime.now().strftime('%H:%M'),
@@ -182,6 +235,7 @@ def register_routes(app, require_admin, db_connect, get_db_file, agent_authentic
                         (datetime.now().isoformat(), 'Release ' + manifest['version'] + ' importada e assinatura verificada.'))
         except (ValueError, zipfile.BadZipFile, KeyError, OSError, RuntimeError) as error:
             return jsonify(ok=False, error=str(error)), 400
+        cleanup_releases()
         return jsonify(ok=True, version=manifest['version']), 201
 
     @app.post('/api/releases/activate')
@@ -219,6 +273,9 @@ def register_routes(app, require_admin, db_connect, get_db_file, agent_authentic
                 return jsonify(ok=False, error='A distribuição foi alterada em outra sessão. Recarregue a página antes de liberar novamente.'), 409
             if not conn.execute('SELECT 1 FROM agent_releases WHERE version=?', (version,)).fetchone():
                 return jsonify(ok=False, error='Release não encontrada.'), 404
+            folder = storage_path(get_db_file()) / version
+            if not any((folder / name).is_file() for name in ('installer.msi', 'installer.exe')):
+                return jsonify(ok=False, error='Os arquivos desta release antiga foram removidos. Selecione uma das duas versões mais recentes.'), 410
             registered = {row[0] for row in conn.execute('SELECT device_id FROM machine_inventory')}
             if set(ids) - registered:
                 return jsonify(ok=False, error='Algum equipamento do grupo não está mais no inventário.'), 409
@@ -226,16 +283,18 @@ def register_routes(app, require_admin, db_connect, get_db_file, agent_authentic
             conn.execute('''INSERT INTO audit_events (timestamp,category,status,description)
                 VALUES (?, 'inventario', 'release_liberada', ?)''',
                 (datetime.now().isoformat(), f'Release {version} liberada para {scope}.'))
+        cleanup_releases()
         return jsonify(ok=True, policy=policy)
 
     @app.post('/api/releases/pause')
     @require_admin
     def pause_release():
-        with db_connect() as conn:
+        with publication_lock, db_connect() as conn:
             conn.execute('DELETE FROM agent_release_policy')
             conn.execute('''INSERT INTO audit_events (timestamp,category,status,description)
                 VALUES (?, 'inventario', 'release_suspensa', 'Novas ofertas de atualização suspensas pelo administrador.')''',
                 (datetime.now().isoformat(),))
+        cleanup_releases()
         return jsonify(ok=True)
 
     @app.get('/api/releases/<version>/installer')

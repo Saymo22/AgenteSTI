@@ -177,6 +177,11 @@
 
       <div class="content-scroll">
         <section class="view active" id="view-overview">
+          <div class="tv-toolbar">
+            <div class="tv-heading"><span class="tv-live-dot"></span><div><strong>STI · Monitoramento</strong><span>Visão de toda a rede</span></div></div>
+            <div class="tv-clock" role="timer" aria-label="Relógio local"><time id="tvLiveTime">--:--:--</time><span id="tvLiveDate"></span></div>
+            <button type="button" class="tool-btn tv-exit" id="exitTv" aria-label="Sair do modo TV">{{ icon('close') }} Sair do modo TV</button>
+          </div>
           <div class="section-title-row">
             <div class="section-title">
               <div class="section-eyebrow"><span class="signal-bars"><i></i><i></i><i></i></span> CENTRAL DE MONITORAMENTO</div>
@@ -246,6 +251,7 @@
                   <button type="button" class="legend-pill" data-status="attention" aria-pressed="false" title="Equipamentos online com latência acima de 100 ms">{{ icon('pulse') }}Latência</button>
                 </div>
               </div>
+              <div id="tvHealthSlot" class="tv-health-slot"></div>
               <div class="organization-filters" aria-label="Organização das máquinas">
                 <label>Setor<select id="filterDepartment"><option value="">Todos os setores</option></select></label>
                 <label>Sala<select id="filterRoom"><option value="">Todas as salas</option></select></label>
@@ -262,8 +268,8 @@
               </div>
               <div class="devices-grid" id="devicesGrid"></div>
             </article>
-            <aside class="overview-side-stack" aria-label="Saúde da Rede e Segmentos">
-              <article class="panel">
+            <aside class="overview-side-stack" id="overviewSideStack" aria-label="Saúde da Rede e Segmentos">
+              <article class="panel network-health-panel" id="networkHealthPanel">
                 <div class="panel-head">
                   <div>
                     <h3>Saúde da Rede</h3>
