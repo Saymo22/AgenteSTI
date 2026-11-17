@@ -1450,6 +1450,17 @@
 .device-group-heading span { color: var(--muted); font-size: .85rem; font-weight: 500; }
 
 /* TV: foco no monitoramento, sem controles de administração. */
+.device-internet { display: flex; align-items: center; gap: 7px; padding: 8px 10px; border-radius: 9px; border: 1px solid currentColor; background: rgba(10, 24, 38, .65); font-size: .75rem; }
+.device-internet svg { width: 15px; height: 15px; flex-shrink: 0; }
+.device-internet span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.device-internet small { margin-left: auto; font-size: .65rem; opacity: .8; white-space: nowrap; }
+.device-internet.available, .internet-status.available { color: var(--green); }
+.device-internet.limited, .internet-status.limited { color: var(--amber); }
+.device-internet.unavailable, .internet-status.unavailable { color: var(--red); }
+.device-internet.unknown, .internet-status.unknown { color: var(--muted); }
+body.kiosk .device-internet { padding: 5px 7px; gap: 5px; font-size: .65rem; }
+body.kiosk .device-internet svg { width: 12px; height: 12px; }
+body.kiosk .device-internet small { font-size: .55rem; }
 .tv-toolbar, .tv-health-slot { display: none; }
 .tv-notification-stack { display: none; }
 body.kiosk .tv-notification-stack {

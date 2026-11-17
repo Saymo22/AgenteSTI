@@ -175,6 +175,32 @@ O painel acompanha `queued → delivered → accepted → completed/rejected/fai
 
 Ao exceder o prazo, o job passa para `expired`, libera a fila e registra que a execução não foi confirmada. Confira a máquina antes de reenviar. Nenhum protocolo de confirmação garante conhecer o efeito de uma ação interrompida exatamente durante sua execução.
 
+## Internet das máquinas — agente 3.5.1
+
+O card de cada equipamento mostra **Com internet**, **Acesso limitado**, **Sem acesso confirmado** ou
+**Não verificado**, inclusive no modo TV. Os detalhes mostram o horário do último teste, a resposta do ping
+externo e a confirmação de navegação. Esse indicador é independente do ping da rede local.
+
+O agente verifica a cada 60 segundos, em segundo plano: um ping para `8.8.8.8` e um GET de
+`http://www.msftconnecttest.com/connecttest.txt`, exigindo HTTP 200 e o conteúdo esperado. Esse é o
+[teste de conectividade documentado pela Microsoft](https://learn.microsoft.com/en-us/troubleshoot/windows-server/networking/troubleshoot-ncsi-guidance).
+Redirecionamentos e páginas de login não confirmam navegação. Nenhum token STI, inventário ou dado do usuário
+é enviado aos destinos externos; eles recebem as informações normais de uma conexão de rede, como o IP de saída.
+
+Uma resposta HTTP válida confirma acesso ao destino de teste, mesmo se o ping estiver bloqueado. Somente ping
+com resposta indica acesso limitado; a falha dos dois testes indica acesso não confirmado, pois firewalls,
+proxies e bloqueios dos próprios destinos também podem interferir. Isso não identifica autenticação no portal
+e não garante acesso a todos os sites. Proxies que exijam autenticação específica do navegador podem impedir
+o teste do agente.
+
+Amostras com mais de 180 segundos e máquinas sem comunicação recente com o agente aparecem como **Não
+verificado**. Enviar a mesma amostra novamente não renova sua idade. O resultado é persistido no servidor.
+Agentes antigos continuam compatíveis e aparecem como **Não verificado** até receberem a versão 3.5.1.
+
+Atualize primeiro o servidor e depois importe `STI_Release_3.5.1.sti` na área de releases. A instalação continua
+sendo MSI por usuário, sem migração para serviço do Windows nem solicitação de administrador decorrente
+desta funcionalidade. O agente continua dependendo da sessão do usuário.
+
 ## Gerar instalador e release
 
 ### Build do MSI e da release

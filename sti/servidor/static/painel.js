@@ -664,6 +664,23 @@ function renderLogs() {
       });
     }
 
+    function getInternetInfo(device) {
+      const report = device.internet || {};
+      const date = new Date(report.checked_at || '');
+      const checked = Number.isFinite(date.getTime()) ? date.toLocaleString('pt-BR') : 'Nenhum teste recebido';
+      const fresh = device.agent_online && typeof report.age_seconds === 'number' && report.age_seconds >= 0 && report.age_seconds <= 180;
+      const status = fresh && ['available', 'limited', 'unavailable'].includes(report.status) ? report.status : 'unknown';
+      const labels = {available: 'Com internet', limited: 'Acesso limitado', unavailable: 'Sem acesso confirmado', unknown: 'Não verificado'};
+      const checks = `Ping externo: ${report.ping === true ? 'respondeu' : report.ping === false ? 'sem resposta' : 'não verificado'} · Navegação: ${report.http === true ? 'confirmada' : report.http === false ? 'não confirmada' : 'não verificada'}`;
+      const detail = status === 'unknown'
+        ? (report.checked_at ? 'Sem teste recente; o resultado anterior não confirma o acesso atual.' : 'Aguardando agente 3.5.1 ou superior e o primeiro teste.')
+        : status === 'limited' ? 'O ping externo respondeu, mas a navegação não foi confirmada.'
+        : status === 'unavailable' ? 'Os testes externos falharam. Pode haver bloqueio ou indisponibilidade.'
+        : 'A máquina recebeu a resposta de navegação esperada.';
+      return {status, label: labels[status], checked, checks, detail,
+        time: Number.isFinite(date.getTime()) ? date.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'}) : '—'};
+    }
+
     function createDeviceCard(device) {
       const os = getDevicePlatform(device);
       const status = getStatus(device);
@@ -681,6 +698,7 @@ function renderLogs() {
             <span class="status-badge ${status.cls}"><i></i>${status.text}</span>
           </div>
           <div class="device-address">${icons.ip}<span>${escapeHtml(device.ip)}</span><small>${device.address_active === false ? 'Último IP' : 'IPv4'}</small></div>
+          ${renderInternetIndicator(device)}
           <div class="device-platform-tag ${os.source}"><strong>${escapeHtml(os.name)}</strong><span>${escapeHtml(os.label)}</span></div>
           <div class="device-identity-tag">${uiIcon('shield')} ${device.device_id ? `Identidade permanente · ${escapeHtml(device.device_id.slice(0,8))}` : 'Cadastro por IP · confira se o endereço mudar'}</div>
           <div class="device-info">
@@ -710,6 +728,12 @@ function renderLogs() {
           </div>
         </article>
       `;
+    }
+
+    function renderInternetIndicator(device) {
+      const internet = getInternetInfo(device);
+      return `<div class="device-internet ${internet.status}" title="${escapeHtml(`${internet.detail} ${internet.checks}. Último teste: ${internet.checked}`)}">
+        ${uiIcon('globe')}<span>${escapeHtml(internet.label)}</span><small>${escapeHtml(internet.time)}</small></div>`;
     }
 
     function timeAgo(seconds) {
@@ -858,6 +882,11 @@ function renderLogs() {
       document.getElementById('modalNetworkValue').textContent = status.text;
       document.getElementById('modalNetworkValue').className = status.cls;
       document.getElementById('modalAgentValue').textContent = identity.agent;
+      const internet = getInternetInfo(device);
+      document.getElementById('modalInternetValue').textContent = internet.label;
+      document.getElementById('modalInternetValue').className = `internet-status ${internet.status}`;
+      document.getElementById('modalInternetChecked').textContent = internet.checked;
+      document.getElementById('modalInternetDetail').textContent = `${internet.detail} ${internet.checks}.`;
       document.getElementById('modalPingValue').textContent = identity.latency;
       document.getElementById('modalSeenValue').textContent = timeAgo(device.seconds_ago);
       document.getElementById('modalIdentificationNotice').textContent = identity.notice;

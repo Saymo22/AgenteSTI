@@ -43,7 +43,7 @@ import requests
 import psutil
 from sti.comum.configuracao import setting, positive_int
 from sti.agente.identidade import collect_identity, persistent_identity, renew_identity
-from sti.agente import atualizacao
+from sti.agente import atualizacao, conectividade
 from sti.comum.versao import AGENT_VERSION
 from sti.comum.configuracao import CONFIG_FILE
 from sti.comum.empacotamento import is_bundled
@@ -492,6 +492,7 @@ def coletar_dados():
         "user": obter_usuario()[:120],
 
         "agent_version": VERSION,
+        "internet": conectividade.monitor.report(),
         "capabilities": ["msg"] + (["restart", "shutdown"] if ALLOW_POWER_COMMANDS else []),
         "os": (
             platform.system()
@@ -1063,6 +1064,7 @@ def iniciar_agente():
         logger.exception("Não foi possível carregar a identidade persistente; verifique o arquivo e suas permissões.")
         return
     init_journal(agent_id)
+    conectividade.monitor.start()
     diagnosticar_rede()
 
     with requests.Session() as session_http:

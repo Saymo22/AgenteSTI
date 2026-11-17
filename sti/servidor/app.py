@@ -19,6 +19,7 @@ from contextlib import contextmanager
 from sti.comum.configuracao import BASE_DIR, setting
 from sti.servidor import organizacao, inventario, releases
 from sti.servidor.identificacao import HostnameResolver
+from sti.comum import conectividade
 
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -257,6 +258,7 @@ def validate_telemetry(data):
     ):
         raise ValueError("Lista de impressoras inválida.")
     hw["printers"] = printers
+    hw['internet'] = conectividade.validate_report(data.get('internet'))
     capabilities = data.get("capabilities", ["msg"])
     if not isinstance(capabilities, list) or any(
         not isinstance(item, str) or item not in COMMAND_ALLOWED for item in capabilities
@@ -1202,6 +1204,7 @@ def api_devices():
                 'name':device['name'],'user':device['user'],'os':device['os'],'hw':device.get('hw',{}),
                 'organization':organizations.get(device_id or device['ip'],organizacao.empty_organization()),
                 'agent_online':bool(active and get_agent_online(device)),
+                'internet':conectividade.public_status(device.get('hw',{}).get('internet'), bool(active and get_agent_online(device))),
                 'agent_version':device.get('agent_version',''),'capabilities':device.get('capabilities',[]),
                 'last_agent_seen':device['last_agent_seen'].isoformat() if device.get('last_agent_seen') else None,
                 'identification_source':identification_source(device),

@@ -248,6 +248,32 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(row[:2], ("Windows 11", "3.2.0"))
         self.assertIsNotNone(row[2])
 
+    def test_internet_report_survives_restart_and_old_agents_remain_compatible(self):
+        report = {'status':'available', 'ping':False, 'http':True, 'checked_ago_seconds':12}
+        self.assertEqual(self.heartbeat({**self.payload, 'internet':report}).status_code, 200)
+        server.devices.clear()
+        server.load_devices()
+        item = self.client.get('/api/devices').json['devices'][0]
+        # Após reiniciar o servidor, aguarda um novo heartbeat antes de afirmar acesso atual.
+        self.assertEqual(item['internet']['status'], 'unknown')
+        self.assertFalse(item['internet']['ping'])
+        self.assertTrue(item['internet']['http'])
+        self.assertGreaterEqual(item['internet']['age_seconds'], 12)
+        self.assertEqual(self.heartbeat({**self.payload, 'internet':report}).status_code, 200)
+        self.assertEqual(self.client.get('/api/devices').json['devices'][0]['internet']['status'], 'available')
+        # Repetir o envio de uma amostra antiga não renova a idade do teste.
+        report['checked_ago_seconds'] = 181
+        self.assertEqual(self.heartbeat({**self.payload, 'internet':report}).status_code, 200)
+        self.assertEqual(self.client.get('/api/devices').json['devices'][0]['internet']['status'], 'unknown')
+        self.assertEqual(self.heartbeat().status_code, 200)
+        self.assertEqual(self.client.get('/api/devices').json['devices'][0]['internet']['status'], 'unknown')
+
+    def test_invalid_internet_report_is_rejected_without_overwriting(self):
+        self.heartbeat()
+        for report in ([], {'status':[]}, {'status':'available', 'ping':True, 'http':False, 'checked_ago_seconds':0}):
+            self.assertEqual(self.heartbeat({**self.payload,'internet':report}).status_code, 400)
+        self.assertIsNone(server.devices[self.ip]['hw']['internet'])
+
     def test_invalid_metrics_rejected_without_overwriting(self):
         self.heartbeat()
         for field, value in (("cpu", 101), ("cpu", True), ("cpu", "abc"), ("ram_free", 100),

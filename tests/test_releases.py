@@ -242,7 +242,8 @@ class ReleaseTests(unittest.TestCase):
         offer = {'release': envelope, 'rollout_id': str(uuid.uuid4())}
         def download(session, url, headers, path, size):
             Path(path).write_bytes(b'MZ-fixture-installer')
-        with patch.object(atualizacao, 'installed_root', return_value=self.root), \
+        with patch.object(atualizacao, 'AGENT_VERSION', '3.5.0'), \
+             patch.object(atualizacao, 'installed_root', return_value=self.root), \
              patch.object(atualizacao, 'pending_offer', offer), patch.object(atualizacao, 'next_attempt', 0), \
              patch.object(atualizacao, 'report_progress'), patch.object(atualizacao, 'download_package', side_effect=download), \
              patch.object(atualizacao, 'verify_package') as verify, \
