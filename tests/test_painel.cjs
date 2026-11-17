@@ -72,6 +72,63 @@ function loadPanel() {
   return {run: code => vm.runInContext(code, context), nodes};
 }
 
+function prepareTvAlerts() {
+  const panel = loadPanel();
+  panel.run(`globalThis.alertTimers=new Map();globalThis.timerSequence=0;
+    setTimeout=(callback,delay)=>{const id=++timerSequence;alertTimers.set(id,{callback,delay});return id};
+    clearTimeout=id=>alertTimers.delete(id);
+    document.getElementById('notificationPanel').hidden=true;addEventLog=()=>{};state.kiosk=true;`);
+  return panel;
+}
+
+test('queda no modo TV exibe nome e IP e fecha após 20 segundos, mesmo sem som', () => {
+  const {run,nodes}=prepareTvAlerts();
+  run(`processStatusChanges([{ip:'10.2.116.10',name:'PC-Financeiro',online:true}]);
+    processStatusChanges([{ip:'10.2.116.10',name:'PC-Financeiro',online:false}]);`);
+  assert.equal(run('state.tvAlerts.length'),1);
+  assert.match(nodes.get('tvNotificationStack').innerHTML,/PC-Financeiro/);
+  assert.match(nodes.get('tvNotificationStack').innerHTML,/10\.2\.116\.10/);
+  assert.equal(run('alertTimers.get(state.tvAlerts[0].timer).delay'),20000);
+  run('alertTimers.get(state.tvAlerts[0].timer).callback()');
+  assert.equal(run('state.tvAlerts.length'),0);
+  assert.equal(nodes.get('tvNotificationStack').innerHTML,'');
+  assert.equal(run('alertTimers.size'),0);
+  assert.equal(run('state.notifications.length'),1);
+});
+
+test('TV não avisa sobre offline inicial, recuperação ou queda fora do modo TV', () => {
+  const {run}=prepareTvAlerts();
+  run(`processStatusChanges([{ip:'10.2.116.10',online:false}]);
+    processStatusChanges([{ip:'10.2.116.10',online:true}]);
+    state.kiosk=false;processStatusChanges([{ip:'10.2.116.10',online:false}]);`);
+  assert.equal(run('state.tvAlerts.length'),0);
+  assert.equal(run('alertTimers.size'),0);
+  assert.equal(run('state.notifications.length'),2);
+});
+
+test('quedas simultâneas limitam a pilha a três avisos e cancelam timers descartados', () => {
+  const {run}=prepareTvAlerts();
+  run(`for(let i=1;i<=6;i++)showTvDropAlert({ip:'10.2.116.'+i,name:'PC-'+i});`);
+  assert.equal(run('state.tvAlerts.length'),3);
+  assert.equal(run('state.tvAlerts[0].ip'),'10.2.116.4');
+  assert.equal(run('alertTimers.size'),3);
+  run('removeTvAlert(state.tvAlerts[0].id)');
+  assert.equal(run('alertTimers.size'),2);
+  run(`document.body.classList.toggle=()=>{};switchView=()=>{};updateClock=()=>{};
+    document.getElementById('overviewSideStack').insertBefore=()=>{};setKioskMode(false);`);
+  assert.equal(run('state.tvAlerts.length'),0);
+  assert.equal(run('alertTimers.size'),0);
+});
+
+test('avisos TV escapam HTML e não duplicam uma mesma queda em novas leituras', () => {
+  const {run,nodes}=prepareTvAlerts();
+  run(`const device={ip:'10.2.116.10',name:'<img src=x onerror=alert(1)>',online:true};
+    processStatusChanges([device]);device.online=false;processStatusChanges([device]);processStatusChanges([device]);`);
+  assert.equal(run('state.tvAlerts.length'),1);
+  assert.doesNotMatch(nodes.get('tvNotificationStack').innerHTML,/<img/);
+  assert.match(nodes.get('tvNotificationStack').innerHTML,/&lt;img/);
+});
+
 test('máquinas já offline não criam notificações nem contador vazio', () => {
   const {run,nodes}=loadPanel();
   run(`document.getElementById('notificationPanel').hidden=true;addEventLog=()=>{};
