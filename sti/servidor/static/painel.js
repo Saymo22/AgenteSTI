@@ -4,6 +4,7 @@ const state = {
       kiosk: false,
       kioskPreviousView: 'overview',
       kioskFullscreen: false,
+      tvAlerts: [],
       search: '',
       statusFilter: 'all',
       connected: false,
@@ -157,6 +158,10 @@ function init() {
       document.getElementById('btnRemap').addEventListener('click', remapNetwork);
       document.getElementById('btnTv').addEventListener('click', toggleKiosk);
       document.getElementById('exitTv').addEventListener('click', toggleKiosk);
+      document.getElementById('tvNotificationStack').addEventListener('click', event => {
+        const button = event.target.closest('[data-tv-alert-close]');
+        if (button) removeTvAlert(Number(button.dataset.tvAlertClose));
+      });
       document.addEventListener('fullscreenchange', () => {
         if (state.kiosk && state.kioskFullscreen && !document.fullscreenElement) setKioskMode(false);
       });
@@ -1176,6 +1181,7 @@ function renderLogs() {
       const health = document.getElementById('networkHealthPanel');
       if (enabled) document.getElementById('tvHealthSlot').appendChild(health);
       else {
+        clearTvAlerts();
         const home = document.getElementById('overviewSideStack');
         home.insertBefore(health, home.firstChild);
       }
@@ -1202,6 +1208,50 @@ function renderLogs() {
 /* ==========================================
    STI — MONITORAMENTO DE QUEDAS
    ========================================== */
+
+let tvAlertSequence = 0;
+
+function renderTvAlerts() {
+    document.getElementById('tvNotificationStack').innerHTML = state.tvAlerts.map(alert => `
+        <article class="tv-alert">
+            <span class="tv-alert-icon" aria-hidden="true">${uiIcon('alert')}</span>
+            <div class="tv-alert-content">
+                <span class="tv-alert-label">Queda detectada</span>
+                <strong>${escapeHtml(alert.name)}</strong>
+                <span class="tv-alert-detail">${escapeHtml(alert.ip)} · ${escapeHtml(alert.time)}</span>
+            </div>
+            <button type="button" class="tv-alert-close" data-tv-alert-close="${alert.id}" aria-label="Fechar aviso de queda">×</button>
+        </article>`).join('');
+}
+
+function removeTvAlert(id) {
+    const alert = state.tvAlerts.find(item => item.id === id);
+    if (!alert) return;
+    clearTimeout(alert.timer);
+    state.tvAlerts = state.tvAlerts.filter(item => item.id !== id);
+    renderTvAlerts();
+}
+
+function clearTvAlerts() {
+    state.tvAlerts.forEach(alert => clearTimeout(alert.timer));
+    state.tvAlerts = [];
+    renderTvAlerts();
+}
+
+function showTvDropAlert(device) {
+    if (!state.kiosk) return;
+    // Limita a pilha para não cobrir o painel durante uma queda de vários equipamentos.
+    if (state.tvAlerts.length >= 3) removeTvAlert(state.tvAlerts[0].id);
+    const id = ++tvAlertSequence;
+    state.tvAlerts.push({
+        id,
+        name: getDeviceIdentity(device).name,
+        ip: String(device.ip || ''),
+        time: new Date().toLocaleTimeString('pt-BR'),
+        timer: setTimeout(() => removeTvAlert(id), 20000)
+    });
+    renderTvAlerts();
+}
 
 function processStatusChanges(devices) {
 
@@ -1276,6 +1326,7 @@ function processStatusChanges(devices) {
 
         if (!current) {
             houveQueda = true;
+            showTvDropAlert(device);
         }
 
     });
