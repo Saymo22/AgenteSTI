@@ -72,6 +72,30 @@ function loadPanel() {
   return {run: code => vm.runInContext(code, context), nodes};
 }
 
+test('internet distingue os resultados externos do status da rede local', () => {
+  const {run}=loadPanel();
+  for (const [status,label] of [['available','Com internet'],['limited','Acesso limitado'],['unavailable','Sem acesso confirmado']]) {
+    run(`state.devices=[{ip:'10.2.116.33',online:true,agent_online:true,internet:{status:${JSON.stringify(status)},checked_at:new Date().toISOString(),age_seconds:2,ping:true,http:false}}];`);
+    assert.equal(run('getInternetInfo(state.devices[0]).label'),label);
+    assert.match(run('createDeviceCard(state.devices[0])'),/device-internet/);
+    assert.match(run('createDeviceCard(state.devices[0])'),new RegExp(label));
+    assert.equal(run('getStatus(state.devices[0]).cls'),'online');
+  }
+});
+
+test('internet antiga, agente offline e versão anterior mostram não verificado', () => {
+  const {run,nodes}=loadPanel();
+  run(`state.devices=[{ip:'10.2.116.33',online:true,agent_online:true,internet:{status:'available',checked_at:new Date().toISOString(),age_seconds:181}}];`);
+  assert.equal(run('getInternetInfo(state.devices[0]).status'),'unknown');
+  run('state.devices[0].internet.age_seconds=0;state.devices[0].agent_online=false');
+  assert.equal(run('getInternetInfo(state.devices[0]).status'),'unknown');
+  run('state.devices[0].agent_online=true;delete state.devices[0].internet');
+  assert.equal(run('getInternetInfo(state.devices[0]).label'),'Não verificado');
+  run("openModal('10.2.116.33')");
+  assert.equal(nodes.get('modalInternetValue').textContent,'Não verificado');
+  assert.match(nodes.get('modalInternetDetail').textContent,/3.5.1/);
+});
+
 function prepareTvAlerts() {
   const panel = loadPanel();
   panel.run(`globalThis.alertTimers=new Map();globalThis.timerSequence=0;
