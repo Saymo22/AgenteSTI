@@ -38,12 +38,33 @@ def file_hash(path):
 
 
 def verify_manifest(envelope, public_key_file=None):
+    # Autenticidade e compatibilidade são verificações distintas. Um servidor
+    # antigo não deve chamar uma release de assinatura inválida por não ler seu formato.
     try:
         manifest = envelope['manifest']
-        if not isinstance(manifest, dict) or manifest.get('format') not in (1, 2) or manifest.get('platform') != 'windows-x64':
-            raise ValueError('Formato de release incompatível.')
+        if not isinstance(manifest, dict):
+            raise ValueError('Manifesto deve conter um objeto JSON.')
+        signature = base64.b64decode(envelope['signature'], validate=True)
+        content = canonical_json(manifest)
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError('Manifesto ou codificação da assinatura da release inválidos.') from error
+    try:
+        key = serialization.load_pem_public_key(Path(public_key_file or PUBLIC_KEY_FILE).read_bytes())
+        if not isinstance(key, Ed25519PublicKey):
+            raise ValueError('Chave pública incompatível.')
+    except (OSError, TypeError, ValueError) as error:
+        raise ValueError('Não foi possível carregar a chave pública STI. Confira a instalação do servidor.') from error
+    try:
+        key.verify(signature, content)
+    except InvalidSignature as error:
+        raise ValueError('Assinatura da release não reconhecida pela chave STI. O pacote foi alterado ou assinado com outra chave.') from error
+    try:
+        if type(manifest.get('format')) is not int or manifest['format'] not in (1, 2, 3):
+            raise ValueError('Assinatura STI válida, mas o formato da release não é suportado. Atualize o servidor STI antes de importar.')
+        if manifest.get('platform') != 'windows-x64':
+            raise ValueError('Plataforma da release incompatível; esperado windows-x64.')
         version_tuple(manifest['version'])
-        if manifest['format'] == 2 and manifest.get('package') != manifest.get('installer'):
+        if manifest['format'] in (2, 3) and manifest.get('package') != manifest.get('installer'):
             raise ValueError('A atualização MSI deve usar o próprio instalador.')
         for name, maximum in (('agent', MAX_BINARY), ('package', MAX_PACKAGE), ('installer', MAX_BINARY)):
             info = manifest[name]
@@ -53,12 +74,8 @@ def verify_manifest(envelope, public_key_file=None):
                 raise ValueError('Tamanho ou hash inválido na release.')
         if not isinstance(manifest.get('notes', ''), str) or len(manifest.get('notes', '')) > 10000:
             raise ValueError('Notas da release inválidas.')
-        key = serialization.load_pem_public_key(Path(public_key_file or PUBLIC_KEY_FILE).read_bytes())
-        if not isinstance(key, Ed25519PublicKey):
-            raise ValueError('Chave pública incompatível.')
-        key.verify(base64.b64decode(envelope['signature'], validate=True), canonical_json(manifest))
-    except (KeyError, TypeError, InvalidSignature, ValueError) as error:
-        raise ValueError('Release inválida ou assinatura não reconhecida.') from error
+    except (KeyError, TypeError) as error:
+        raise ValueError('Manifesto da release incompleto ou inválido.') from error
     return manifest
 
 

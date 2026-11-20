@@ -1,5 +1,7 @@
 """Validação de produto MSI e preservação da configuração, sem instalar produtos."""
 import os
+import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -61,21 +63,68 @@ class MsiTests(unittest.TestCase):
         import msilib
         from scripts.msi import build_msi
         with tempfile.TemporaryDirectory(dir=WORK) as folder:
-            path = build_msi(sys.executable, Path(folder)/'test.msi', '3.5.1')
-            msi.verify_package(path, '3.5.1')
+            path = build_msi(sys.executable, Path(folder)/'test.msi', '3.5.2')
+            msi.verify_package(path, '3.5.2')
             db = msilib.OpenDatabase(str(path), msilib.MSIDBOPEN_READONLY)
             view = db.OpenView('SELECT `FileName` FROM `File`')
             view.Execute(None)
             self.assertIn('STI_Agente.exe', view.Fetch().GetString(1))
             self.assertIsNone(view.Fetch())
-            self.assertEqual(db.GetSummaryInformation(0).GetProperty(15), 10)
+            self.assertEqual(db.GetSummaryInformation(0).GetProperty(15), 2)
             view.Close()
             view = db.OpenView('SELECT `Action`, `Sequence` FROM `InstallExecuteSequence`')
             view.Execute(None)
             actions = {}
             while record := view.Fetch():
                 actions[record.GetString(1)] = record.GetInteger(2)
-            self.assertLess(actions['InstallExecute'], actions['RemoveExistingProducts'])
+            self.assertLess(actions['InstallInitialize'], actions['RemoveExistingProducts'])
+            self.assertLess(actions['RemoveExistingProducts'], actions['InstallFiles'])
+            self.assertLess(actions['ConfigureService'], actions['InstallServices'])
+            self.assertLess(actions['InstallServices'], actions['ConfigureRecovery'])
+            self.assertLess(actions['ConfigureRecovery'], actions['StartServices'])
             self.assertLess(actions['RemoveExistingProducts'], actions['InstallFinalize'])
             view.Close()
+            view = db.OpenView('SELECT `Name`,`ServiceType`,`StartType`,`Arguments` FROM `ServiceInstall`')
+            view.Execute(None)
+            service = view.Fetch()
+            self.assertEqual(service.GetString(1), 'STIAgente')
+            self.assertEqual(service.GetInteger(2), 16)
+            self.assertEqual(service.GetInteger(3), 2)
+            self.assertEqual(service.GetString(4), '--service')
+            view.Close()
+            view = db.OpenView('SELECT `Event`,`Wait` FROM `ServiceControl`')
+            view.Execute(None)
+            control = view.Fetch()
+            self.assertEqual(control.GetInteger(1), 163)
+            self.assertEqual(control.GetInteger(2), 1)
+            view.Close()
+            view = db.OpenView('SELECT `Action`,`Target` FROM `CustomAction`')
+            view.Execute(None)
+            targets = {}
+            while record := view.Fetch():
+                targets[record.GetString(1)] = record.GetString(2)
+            view.Close()
+            # Usa o parser real do Python/Windows, como o executável congelado,
+            # em vez de testar apenas o texto da tabela MSI.
+            prefix = subprocess.list2cmdline([sys.executable, '-c', 'import json,sys; print(json.dumps(sys.argv[1:]))'])
+            for legacy in ('', 'C:\\Users\\Nome Com Espaco\\STI\\Agent', 'C:\\Users\\Nome Com Espaco\\STI\\Agent\\'):
+                properties = {'INSTALLDIR':'C:\\Program Files\\STI\\AgentService\\',
+                              'STI_CONFIGFILE':'', 'OriginalDatabase':'C:\\Downloads\\Meu MSI\\agent.msi',
+                              'STI_LEGACYDIR':legacy, 'STI_USERSID':'S-1-5-21-1000'}
+                for action, expected in [('ConfigureService',6),('CommitMigration',3)]:
+                    with self.subTest(action=action,legacy=legacy):
+                        command = targets[action]
+                        for name, value in properties.items():
+                            command = command.replace('['+name+']',value)
+                        result = subprocess.run(prefix+' '+command, capture_output=True, text=True, check=True)
+                        arguments = json.loads(result.stdout)
+                        self.assertEqual(len(arguments),expected)
+                        self.assertEqual(arguments[-1],properties['STI_USERSID'])
+                        decoded = msi.msi_directory(arguments[-2])
+                        self.assertEqual(Path(decoded).resolve() if decoded else '', Path(legacy).resolve() if legacy else '')
+                        with patch('sti.agente.migracao_servico.configure_service') as configure, \
+                             patch('sti.agente.migracao_servico.commit_migration') as migrate:
+                            self.assertEqual(msi.entry(arguments),0)
+                            invoked = configure if action == 'ConfigureService' else migrate
+                            self.assertEqual(invoked.call_args.args[-2] if action == 'ConfigureService' else invoked.call_args.args[0],decoded)
             del view, db

@@ -1,4 +1,4 @@
-# STI Command Center — V3.5.0
+# STI Command Center — V3.5.3
 
 Monitoramento e gerenciamento de máquinas Windows, com servidor Flask/Waitress, banco SQLite e agente para os computadores dos usuários.
 
@@ -6,7 +6,7 @@ A rede padrão foi preservada: **10.2.116.0/22**, com os segmentos **116, 117, 1
 
 ## O que esta versão melhora
 
-- Instalador MSI por usuário, inicialização com o login e desinstalação pelas configurações do Windows.
+- Instalador MSI por máquina, com serviço iniciado antes do login e mantido após logoff.
 - Releases assinadas, versões dos agentes no painel, distribuição por grupo piloto ou para todos e janela de horário.
 - Atualização automática pela comunicação com o servidor STI, com pacote verificado e instalação gerenciada pelo Windows Installer.
 - Telemetria validada: nome, usuário, versão do Windows, CPU, RAM, disco, uptime e impressoras.
@@ -145,27 +145,33 @@ O agente pode rodar a partir de `agente.py` com as dependências instaladas, ou 
 .\.venv\Scripts\python.exe agente.py
 ```
 
-Para distribuir, use **`dist/releases/3.5.0/STI_Agente_3.5.0.msi`**, acompanhado do **`agent-config.json`** preparado para o seu servidor. Não é necessário instalar Python nas estações.
+Para distribuir, use **`dist/releases/3.5.3/STI_Agente_3.5.3.msi`**, acompanhado do **`agent-config.json`** preparado para o seu servidor. Não é necessário instalar Python nas estações.
 
-O MSI instala em **`%LOCALAPPDATA%\STI\Agent`**, na conta que o executa. A inicialização acontece no login dessa conta; o agente continua na sessão do usuário, permitindo mensagens no desktop. Não é um serviço de sistema. Use a mesma conta do agente anterior, sem executar como outro administrador.
+O MSI 3.5.3 instala o executável em **`%ProgramFiles%\STI\AgentService`** e registra **STIAgente / STI Agente de Monitoramento**, executado como LocalSystem. Inicia automaticamente com o Windows, antes do login, e continua após logoff. Configuração, identidade, diário de comandos, atualizações e logs ficam em **`%ProgramData%\STIService`**, com acesso restrito a SYSTEM e Administradores. A instalação inicial exige autorização administrativa; não precisa da senha do usuário para funcionar.
 
-Na migração de qualquer versão anterior à 3.5.0, feche manualmente o agente antigo e execute o MSI **uma vez**. A configuração `sti-config.json` já instalada tem prioridade e é preservada. Mantenha o arquivo de identidade; não remova `%ProgramData%\STI` nem `%LOCALAPPDATA%\STI`. Remova atalhos ou tarefas que iniciavam uma cópia portátil antiga para evitar duplicidade.
+Para migrar de 3.5.0/3.5.1, inicie o MSI na sessão do usuário da instalação anterior e autorize a elevação. Confira a pasta anterior mostrada pelo instalador (normalmente `%LOCALAPPDATA%\STI\Agent`). O MSI copia a configuração e o UUID para a pasta protegida; não executa o binário antigo como administrador. Na falta da identidade anterior, a migração falha em vez de criar outro cadastro silenciosamente. Preserve `%ProgramData%\STI` e `%LOCALAPPDATA%\STI` até confirmar a migração. O mesmo cadastro no servidor mantém setor, sala e responsável.
 
-Na janela do MSI é possível informar o caminho do `agent-config.json` e escolher iniciar no login ou manualmente. A primeira instalação falha e desfaz os arquivos gerenciados se não encontrar uma configuração válida. Configuração, UUID, logs e diário de comandos não pertencem aos arquivos removidos pelo MSI. Desinstale por **Aplicativos instalados** do Windows.
+Depois que o serviço inicia e a instalação é confirmada, a migração remove o startup anterior somente se o caminho registrado corresponder à pasta escolhida, e encerra as instâncias dessa pasta. Se o perfil estiver indisponível, a limpeza aguarda o carregamento dele. Outras pastas e tarefas/atalhos portáteis não são removidos: confira outras contas e remova esses inícios separadamente. Arquivos e entrada do MSI por usuário antigo são preservados; após validar o serviço, o MSI antigo pode ser desinstalado. Os produtos usam códigos de upgrade separados para evitar desinstalação entre contextos.
 
-Para instalação silenciosa, deixe o JSON ao lado do MSI e execute na conta do usuário:
+Na instalação nova, deixe a pasta de migração vazia e informe `agent-config.json`, ou deixe-o ao lado do MSI. Em atualizações do serviço, a configuração protegida existente tem prioridade. Desinstale por **Aplicativos instalados**; o MSI para e remove o serviço, preservando os dados para reparo/reinstalação. Não copie a pasta de dados nem o UUID para outra máquina.
+
+A 3.5.3 corrige o tratamento de pastas antigas terminadas em barra no MSI. Se o JSON anterior foi apagado, o instalador procura `agent-config.json` ao lado do MSI. Se apagou toda a instalação, confira o cadastro em **Aplicativos instalados** e desinstale/repare pelo Windows; apagar a pasta não remove o produto MSI. Para uma instalação nova, deixe a migração vazia, preservando qualquer `identity.db` restante. Não reutilize a release 3.5.2 com outro conteúdo. O servidor precisa aceitar o protocolo 3 antes da importação.
+
+Para instalação silenciosa, execute em terminal administrativo com o JSON ao lado do MSI:
 
 ```powershell
-msiexec.exe /i ".\STI_Agente_3.5.0.msi" /qn /norestart /l*v ".\instalacao-sti.log"
+msiexec.exe /i ".\STI_Agente_3.5.3.msi" /qn /norestart /l*v ".\instalacao-sti.log"
 ```
 
-Também é possível informar `STI_CONFIGFILE="C:\caminho\agent-config.json"` e `STI_STARTUP=0`. Nunca passe o token como argumento do MSI. O código 0 indica sucesso; 3010 indica sucesso com reinicialização pendente. O MSI não força a reinicialização do Windows. Confira a comunicação do agente no painel; instalar os arquivos não comprova que o Endpoint permitiu executá-lo.
+Também é possível informar `STI_CONFIGFILE="C:\caminho\agent-config.json"` e, para migração, `STI_LEGACYDIR="C:\Users\usuario\AppData\Local\STI\Agent"`. Nunca passe o token como argumento. `STI_STARTUP` não se aplica ao serviço. O código 0 indica sucesso; 3010 indica reinicialização pendente. O MSI não força reinício. Confira a comunicação no painel; instalar arquivos não comprova que o Endpoint permitiu executá-los.
 
-Os erros da preparação da configuração ficam em `%LOCALAPPDATA%\STI\logs\instalador.log`. O parâmetro `/l*v` grava o log do Windows Installer. Preserve os logs ao investigar falhas.
+Os logs ficam em `%ProgramData%\STIService\logs\instalador.log` e `agente_v3_1.log` (nome histórico preservado). Consulte com administrador. `/l*v` grava o log do Windows Installer. O Windows reinicia o serviço após falhas, com intervalo de 60 segundos; paradas manuais e saídas planejadas para atualização não devem acionar recuperação.
+
+Valide em uma estação piloto com Kaspersky ativo: instalação, reinício do Windows, dados antes do login, logoff, mensagens após login e atualização futura. Suspensão, hibernação e desligamento continuam pausando a execução. O teste de internet reflete a conta do serviço, que pode ter acesso/proxy diferente do navegador do usuário. Impressoras instaladas somente no perfil do usuário também podem não aparecer. Agentes por usuário não obtêm automaticamente a autorização administrativa inicial.
 
 ## Mensagens, reinicialização e desligamento
 
-Mensagens são recebidas no próximo heartbeat do agente e consideradas concluídas quando o usuário fecha a janela.
+Mensagens são recebidas no próximo heartbeat. O serviço envia para uma sessão ativa e aguarda confirmação por até 30 segundos; sem usuário conectado, rejeita o comando. Não exibe janelas na sessão SYSTEM. O nome de usuário vem das sessões do Windows; SYSTEM não aparece como pessoa conectada.
 
 As ações de energia permanecem **desabilitadas por padrão**. Para habilitá-las em uma máquina, configure `STI_ALLOW_POWER_COMMANDS` como `true` no JSON do agente e reinicie-o. O painel habilita os botões somente após receber essa capacidade de um agente com comunicação recente.
 
@@ -197,9 +203,7 @@ Amostras com mais de 180 segundos e máquinas sem comunicação recente com o ag
 verificado**. Enviar a mesma amostra novamente não renova sua idade. O resultado é persistido no servidor.
 Agentes antigos continuam compatíveis e aparecem como **Não verificado** até receberem a versão 3.5.1.
 
-Atualize primeiro o servidor e depois importe `STI_Release_3.5.1.sti` na área de releases. A instalação continua
-sendo MSI por usuário, sem migração para serviço do Windows nem solicitação de administrador decorrente
-desta funcionalidade. O agente continua dependendo da sessão do usuário.
+Na 3.5.1 a instalação ainda era por usuário. A partir da 3.5.2, use o MSI de serviço e a migração acima. Atualize primeiro o servidor antes de importar a release correspondente.
 
 ## Gerar instalador e release
 
@@ -221,12 +225,12 @@ O build gera:
 | Arquivo | Uso |
 | --- | --- |
 | `dist/STI_Agente.exe` | Executável portátil; não habilita atualização automática sem instalação. |
-| `dist/releases/3.5.0/STI_Agente_3.5.0.msi` | Instalação inicial nas estações, sem Python. |
-| `dist/releases/3.5.0/STI_Release_3.5.0.sti` | Pacote assinado para importar no painel STI. |
-| `dist/releases/3.5.0/manifest.json` | Versão, notas, hashes e assinatura. |
+| `dist/releases/3.5.3/STI_Agente_3.5.3.msi` | Instalação inicial nas estações, sem Python. |
+| `dist/releases/3.5.3/STI_Release_3.5.3.sti` | Pacote assinado para importar no painel STI. |
+| `dist/releases/3.5.3/manifest.json` | Versão, notas, hashes e assinatura. |
 
 
-O executável mantém o nome `STI_Agente.exe` entre versões; a versão é definida em `sti/comum/versao.py`. Para gerar a próxima correção, por exemplo `3.5.1`:
+O executável mantém o nome `STI_Agente.exe` entre versões; a versão é definida em `sti/comum/versao.py`. Para gerar a próxima correção, por exemplo `3.5.4`:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/gerar_release.py --bump patch --notes "Descrição das correções desta versão."
@@ -255,7 +259,7 @@ Referência: [SignTool e verificação Authenticode na documentação da Microso
 A lista mantém somente as **duas versões de maior número**. Após publicar outra release, o servidor remove os pacotes antigos do disco. A versão liberada na política atual e os alvos com download, instalação ou reinicialização pendente informados na última hora são preservados; a limpeza é repetida nas próximas publicações e ao liberar ou suspender uma distribuição. Os manifestos pequenos continuam no banco para impedir reutilizar uma versão com conteúdo diferente. Essa retenção vale para o servidor STI, sem alterar releases no GitHub nem arquivos locais em `dist/`.
 
 1. Atualize primeiro o servidor, instale as dependências atualizadas (`pip install -r requirements.txt`) e reinicie-o. O upload usa Flask 3.1; a migração do banco é aditiva.
-2. Entre no painel e abra **Atualizações**. Importe `STI_Release_3.5.0.sti`; importar não inicia a distribuição.
+2. Entre no painel e abra **Atualizações**. Importe `STI_Release_3.5.3.sti`; importar não inicia a distribuição.
 3. Baixe o instalador pela lista de versões ou use o arquivo local e instale uma vez nas estações com agente antigo. Máquinas descobertas apenas por ping não podem receber instalação remota por este mecanismo.
 4. Nas próximas releases, selecione a versão e comece com **Grupo piloto**, escolhendo equipamentos pelo ID permanente. Depois de conferir o resultado, libere para **Todos os agentes**.
 5. Opcionalmente, defina início e fim da janela de horário. O painel mostra o horário do servidor; uma janela como `22:00–06:00` atravessa a meia-noite. Sem janela, a oferta pode ocorrer a qualquer horário.
@@ -265,17 +269,19 @@ A versão disponível é oferecida na resposta ao heartbeat existente. O agente 
 
 Quando o último estado recebido é download, instalação ou atualização concluída, mas não há mais comunicação recente, a tela mostra **Sem confirmação recente**. Ela conserva a última versão e o último resultado como histórico, sem afirmar que o processo continua instalado ou que uma instalação antiga ainda está em andamento. Esse estado tem filtro próprio; não identifica o motivo da perda de comunicação. Logs da estação e eventos do Endpoint continuam necessários para confirmar bloqueio ou remoção.
 
-O agente instalado por MSI usa o protocolo de atualização 2. Após receber uma oferta compatível, aguarda os comandos pendentes, valida a assinatura Ed25519, tamanho e SHA-256 do MSI e confere seu produto, versão e modo por usuário. O download usa somente o servidor configurado, com autenticação e sem seguir redirecionamentos. Ele solicita a instalação ao `msiexec.exe` e encerra sua execução para liberar os arquivos. O Windows Installer gerencia a transação, remove o MSI anterior e inicia o agente após a instalação. Não há cópia do próprio agente para `STI_Update.exe`, troca manual de binários ou backup `previous-agent.exe`.
+O serviço usa o protocolo de atualização **3**. Após receber oferta compatível, aguarda comandos pendentes, valida assinatura Ed25519, tamanho e SHA-256 e confere produto, versão e instalação por máquina. Baixa somente do servidor configurado, com autenticação e sem redirecionamentos. Chama `msiexec.exe` e encerra de forma planejada. As tabelas nativas do Windows Installer gerenciam parada, instalação e início do serviço. Não há atualizador STI separado nem troca manual do próprio executável.
 
 A primeira comunicação da nova versão confirma a atualização no painel. Uma falha na transação usa o rollback do Windows Installer; uma falha posterior de execução ou bloqueio do antivírus não é revertida automaticamente. Se o agente não voltar, consulte os logs da estação e faça o reparo manual com um MSI aceito pelo Endpoint. Se o Windows solicitar reinicialização, o estado fica adiado; o MSI não força o reinício.
 
-Releases antigas no formato 1 continuam disponíveis para agentes antigos. Uma release MSI (formato 2) só é oferecida aos agentes MSI. A migração inicial requer instalação manual uma vez. Não reutilize versões publicadas.
+Os formatos 1 (legado), 2 (MSI por usuário) e 3 (MSI como serviço) são separados. O servidor só oferece releases do protocolo anunciado. O agente 3.5.1 por usuário não recebe a 3.5.2 como atualização silenciosa: exige migração administrativa inicial. Depois dela, atualizações futuras do serviço não dependem de login nem de nova autorização por versão. Não reutilize versões publicadas.
 
-Falhas transitórias de download podem ser tentadas novamente após cinco minutos. Falhas de integridade ou versões com instalação adiada não entram em ciclo: publique outra versão ou libere novamente a distribuição para autorizar nova tentativa. O estado fica em `%LOCALAPPDATA%\STI\update-state.json`; os pacotes e logs em `%LOCALAPPDATA%\STI\updates\<id>`. Os logs da última tentativa são mantidos para diagnóstico. Configuração e UUID continuam preservados.
+Se um servidor anterior à migração para serviço mostrar **Release inválida ou assinatura não reconhecida** ao importar a 3.5.2/3.5.3, atualize o servidor e reinicie `agente-sti.service`: o validador antigo também usava essa mensagem para rejeitar o formato 3, antes de verificar a assinatura. A correção mantém a chave pública original e aceita os três formatos. O validador atualizado diferencia formato não suportado, chave pública ausente/inválida e assinatura rejeitada; somente pacotes autenticados podem ser importados. Não gere outra chave para resolver incompatibilidade de formato.
+
+Falhas transitórias podem ser tentadas novamente após cinco minutos. Falhas de integridade ou instalações adiadas não entram em ciclo: publique outra versão ou libere novamente a distribuição. O estado fica em `%ProgramData%\STIService\update-state.json`; pacotes e logs em `%ProgramData%\STIService\updates\<id>`. Configuração e UUID são preservados.
 
 O MSI é um formato padrão de instalação, **não uma garantia de aceitação pelo Kaspersky**. O executável ainda precisa ser aceito pela proteção da empresa. Nenhuma proteção é desativada ou contornada pelo projeto.
 
-A remoção do produto anterior ocorre depois de instalar e validar o novo pacote, dentro da transação. Essa ordem usa componentes com identificadores estáveis e segue a sequência descrita pela [Microsoft para RemoveExistingProducts](https://learn.microsoft.com/en-us/windows/win32/msi/removeexistingproducts-action).
+Entre versões do serviço, o produto anterior é removido depois de iniciar a transação e antes de instalar os novos arquivos e serviço. A remoção participa do rollback, conforme a [sequência documentada pela Microsoft](https://learn.microsoft.com/en-us/windows/win32/msi/removeexistingproducts-action). Dados persistentes não são arquivos removidos pelo MSI.
 
 ### Releases no GitHub
 
@@ -347,7 +353,9 @@ O áudio é validado pelo navegador antes de substituir o anterior. O arquivo fi
 
 ## Identidade permanente, MACs e reinstalações
 
-O agente V3.3 gera um **UUID da instalação** e o persiste em `%ProgramData%\STI\identity.db`. Reiniciar ou substituir o executável não altera esse UUID. `STI_IDENTITY_FILE` permite escolher outro caminho persistente. Se o arquivo compartilhado já existir e puder ser lido, o agente reutiliza o UUID mesmo com acesso somente leitura. Se não puder criar o arquivo compartilhado, tenta `%LOCALAPPDATA%\STI\identity.db` e registra o fallback no log; nesse caso, mantenha a mesma conta para executá-lo. Um arquivo corrompido não é substituído silenciosamente. Faça a instalação com acesso ao mesmo arquivo de identidade durante as atualizações.
+No serviço 3.5.2, a identidade fica em `%ProgramData%\STIService\identity.db`; a migração importa o UUID anterior. O serviço usa esse caminho protegido de forma fixa.
+
+Nas versões anteriores ao serviço, o agente gera um **UUID da instalação** e o persiste em `%ProgramData%\STI\identity.db`. Reiniciar ou substituir o executável não altera esse UUID. `STI_IDENTITY_FILE` permite escolher outro caminho persistente. Se o arquivo compartilhado já existir e puder ser lido, o agente reutiliza o UUID mesmo com acesso somente leitura. Se não puder criar o arquivo compartilhado, tenta `%LOCALAPPDATA%\STI\identity.db` e registra o fallback no log; nesse caso, mantenha a mesma conta para executá-lo. Um arquivo corrompido não é substituído silenciosamente. Faça a instalação com acesso ao mesmo arquivo de identidade durante as atualizações.
 
 O servidor cria seu próprio **ID permanente do equipamento**, associado ao UUID recebido. Setor, sala, responsável e novos eventos acompanham esse ID; o IP passa a ser apenas o endereço atual. Os cartões, o pop-up, a busca e o CSV mostram as referências de identidade. A busca também encontra MAC, número de série, fabricante e modelo. O pop-up permite consultar os últimos 20 eventos do equipamento; o relatório aceita `device_id` para filtrar e exportar o histórico entre diferentes IPs.
 

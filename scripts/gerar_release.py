@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from sti.comum.releases import canonical_json, file_hash, verify_manifest, version_tuple
 from sti.comum.versao import AGENT_VERSION
+from sti.comum.msi import machine_package
 from scripts.assinatura_windows import signing_options, sign_and_verify
 
 
@@ -31,7 +32,7 @@ def create_bundle(agent, installer, version, notes, private_key, destination):
     if not msi:
         with zipfile.ZipFile(package, 'w', zipfile.ZIP_DEFLATED) as archive:
             archive.write(agent, 'STI_Agente.exe')
-    manifest = {'format': 2 if msi else 1, 'platform': 'windows-x64', 'version': version, 'notes': notes,
+    manifest = {'format': (3 if machine_package(version) else 2) if msi else 1, 'platform': 'windows-x64', 'version': version, 'notes': notes,
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'agent': file_info(agent), 'package': file_info(package), 'installer': file_info(installer)}
     key = serialization.load_pem_private_key(Path(private_key).read_bytes(), password=None)

@@ -78,7 +78,7 @@ def validate_update_status(data):
     supported = data.get('update_supported', False)
     if not isinstance(supported, bool):
         raise ValueError('update_supported deve ser booleano.')
-    if data.get('update_protocol', 1) not in (1, 2):
+    if data.get('update_protocol', 1) not in (1, 2, 3):
         supported = False
     report = data.get('update_status', {})
     if not isinstance(report, dict):
@@ -156,7 +156,7 @@ def import_bundle(bundle, root, conn):
                 raise ValueError('Manifesto da release excede o limite.')
             envelope = json.loads(archive.read('manifest.json'))
             manifest = verify_manifest(envelope)
-            msi = manifest['format'] == 2
+            msi = manifest['format'] in (2, 3)
             files = [('installer.msi', MAX_BINARY)] if msi else [('agent.zip', MAX_PACKAGE), ('installer.exe', MAX_BINARY)]
             if sorted(archive.namelist()) != sorted(['manifest.json', *[name for name, _ in files]]):
                 raise ValueError('Conteúdo da release incompatível com o manifesto.')

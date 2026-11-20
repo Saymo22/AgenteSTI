@@ -10,8 +10,8 @@ CONFIG_KEYS = {'AGENT_INTERVAL', 'STI_USE_HTTPS', 'STI_IDENTITY_FILE', 'RETRY_IN
 def default_install_root():
     return Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'STI' / 'Agent'
 
-def configure_install_logging():
-    path = default_install_root().parent / 'logs' / 'instalador.log'
+def configure_install_logging(service_root=None):
+    path = (Path(service_root) if service_root else default_install_root().parent) / 'logs' / 'instalador.log'
     path.parent.mkdir(parents=True, exist_ok=True)
     if not logger.handlers:
         handler = RotatingFileHandler(path, maxBytes=2 * 1024 * 1024, backupCount=3, encoding='utf-8')

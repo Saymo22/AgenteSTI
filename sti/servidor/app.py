@@ -259,6 +259,10 @@ def validate_telemetry(data):
         raise ValueError("Lista de impressoras inválida.")
     hw["printers"] = printers
     hw['internet'] = conectividade.validate_report(data.get('internet'))
+    mode = data.get('agent_mode', 'unknown')
+    if mode not in ('unknown', 'user', 'service'):
+        raise ValueError('Modo de execução do agente inválido.')
+    hw['agent_mode'] = mode
     capabilities = data.get("capabilities", ["msg"])
     if not isinstance(capabilities, list) or any(
         not isinstance(item, str) or item not in COMMAND_ALLOWED for item in capabilities
@@ -1206,6 +1210,7 @@ def api_devices():
                 'agent_online':bool(active and get_agent_online(device)),
                 'internet':conectividade.public_status(device.get('hw',{}).get('internet'), bool(active and get_agent_online(device))),
                 'agent_version':device.get('agent_version',''),'capabilities':device.get('capabilities',[]),
+                'agent_mode':device.get('hw',{}).get('agent_mode','unknown'),
                 'last_agent_seen':device['last_agent_seen'].isoformat() if device.get('last_agent_seen') else None,
                 'identification_source':identification_source(device),
                 'latency':device.get('latency') if online and last_ping and (now-last_ping).total_seconds() <= OFFLINE_THRESHOLD else None,

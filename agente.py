@@ -1,6 +1,11 @@
 """Entrada do agente Windows; implementação em sti.agente."""
 import sys
 
+if __name__ == '__main__' and sys.argv[1:] == ['--service']:
+    from sti.agente.servico import run
+    run()
+    raise SystemExit(0)
+
 if __name__ == '__main__' and len(sys.argv) > 1 and sys.argv[1].startswith('--msi-'):
     from sti.agente.msi import entry
     raise SystemExit(entry(sys.argv[1:]))

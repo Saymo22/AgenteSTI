@@ -47,6 +47,7 @@ from sti.agente import atualizacao, conectividade
 from sti.comum.versao import AGENT_VERSION
 from sti.comum.configuracao import CONFIG_FILE
 from sti.comum.empacotamento import is_bundled
+from sti.comum.servico import data_dir, service_mode
 
 
 # ============================================
@@ -112,7 +113,7 @@ APPDATA = Path(
     )
 )
 
-LOG_DIR = APPDATA / "STI" / "logs"
+LOG_DIR = data_dir() / 'logs' if service_mode() else APPDATA / "STI" / "logs"
 
 LOG_DIR.mkdir(
     parents=True,
@@ -190,7 +191,7 @@ def verificar_instancia_unica():
     mutex_handle = kernel32.CreateMutexW(
         None,
         False,
-        "Local\\STI_Agente_V3_1"
+        "Global\\STI_Agente_Service" if service_mode() else "Local\\STI_Agente_V3_1"
     )
 
     if not mutex_handle:
@@ -302,6 +303,8 @@ def obter_usuario():
             return ""
         except Exception:
             logger.debug("Sessão Windows indisponível; usando usuário do processo.", exc_info=True)
+        if service_mode():
+            return ''  # Não apresentar SYSTEM como usuário conectado se a consulta WTS falhar.
         user = getpass.getuser()
         if user.casefold() in ("system", "local service", "network service", "sistema", "serviço local", "serviço de rede"):
             return ""
@@ -492,6 +495,7 @@ def coletar_dados():
         "user": obter_usuario()[:120],
 
         "agent_version": VERSION,
+        "agent_mode": 'service' if service_mode() else 'user',
         "internet": conectividade.monitor.report(),
         "capabilities": ["msg"] + (["restart", "shutdown"] if ALLOW_POWER_COMMANDS else []),
         "os": (
@@ -583,6 +587,9 @@ def confirmar_comando(
 def exibir_mensagem(message):
 
     try:
+        if service_mode():
+            from sti.agente.servico import send_message
+            return send_message(message)
 
         logger.info(
             "Tentando exibir janela do STI."
@@ -1012,7 +1019,9 @@ def ocultar_console():
 # 16 - INICIAR AGENTE
 # ============================================
 
-def iniciar_agente():
+def iniciar_agente(stop_event=None):
+
+    stop_event = stop_event or threading.Event()
 
     logger.info("=" * 55)
 
@@ -1071,9 +1080,12 @@ def iniciar_agente():
 
         primeira_execucao = True
 
-        while True:
+        while not stop_event.is_set():
 
             try:
+                if service_mode():
+                    from sti.agente.migracao_servico import retry_migration
+                    retry_migration()
 
                 payload = coletar_dados()
 
@@ -1081,19 +1093,19 @@ def iniciar_agente():
                     session_http,
                     payload
                 )
-                if sucesso:
+                if sucesso and not stop_event.is_set():
                     retry_pending_commands()
                     with journal_connect() as conn:
                         pending_job = conn.execute("SELECT 1 FROM jobs WHERE stage!='acknowledged' LIMIT 1").fetchone()
                     with processed_lock:
                         busy = bool(processed_commands) or bool(pending_job)
                     if not busy and atualizacao.begin_update(session_http, SERVER_URL, AGENT_TOKEN, agent_id, CONFIG_FILE):
-                        return
+                        return True  # Encerramento planejado; o MSI é responsável por reiniciar o serviço.
 
 
                 # Mostrar o resultado inicial
                 # por 4 segundos e ocultar a janela.
-                if primeira_execucao:
+                if primeira_execucao and not service_mode():
 
                     primeira_execucao = False
 
@@ -1105,14 +1117,14 @@ def iniciar_agente():
                         "Continuando em segundo plano..."
                     )
 
-                    time.sleep(4)
+                    stop_event.wait(4)
 
                     ocultar_console()
 
 
                 if sucesso:
 
-                    time.sleep(
+                    stop_event.wait(
                         AGENT_INTERVAL
                     )
 
@@ -1123,7 +1135,7 @@ def iniciar_agente():
                         RETRY_INTERVAL
                     )
 
-                    time.sleep(
+                    stop_event.wait(
                         RETRY_INTERVAL
                     )
 
@@ -1141,7 +1153,7 @@ def iniciar_agente():
                     "Erro no ciclo principal."
                 )
 
-                time.sleep(
+                stop_event.wait(
                     RETRY_INTERVAL
                 )
 

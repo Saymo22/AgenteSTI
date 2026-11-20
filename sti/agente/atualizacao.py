@@ -12,6 +12,7 @@ from sti.comum.releases import (AGENT_FILENAME, MAX_PACKAGE, atomic_json, read_j
                                verify_manifest, verify_file, version_tuple)
 from sti.comum.versao import AGENT_VERSION
 from sti.comum.empacotamento import is_bundled, executable_path
+from sti.comum.servico import data_dir, service_mode, SERVICE_PROTOCOL
 
 logger = logging.getLogger('STI_AGENT')
 pending_offer = None
@@ -33,20 +34,20 @@ def installed_root():
 
 
 def state_path(root):
-    return Path(root).parent / 'update-state.json'
+    return (data_dir() if service_mode() else Path(root).parent) / 'update-state.json'
 
 
 def update_report():
     root = installed_root()
-    if not root:
-        return {'update_supported': False, 'update_protocol': 2}
+    if not root or not service_mode():
+        return {'update_supported': False, 'update_protocol': SERVICE_PROTOCOL}
     try:
         saved = read_json(state_path(root), {})
         report = {key: saved.get(key, '') for key in ('status', 'target_version', 'result')}
         report['status'] = report['status'] or 'idle'
     except (ValueError, OSError, AttributeError):
         report = {'status': 'failed', 'target_version': '', 'result': 'Não foi possível ler o estado local da atualização.'}
-    return {'update_supported': True, 'update_protocol': 2, 'update_status': report}
+    return {'update_supported': True, 'update_protocol': SERVICE_PROTOCOL, 'update_status': report}
 
 
 def remember_offer(offer):
@@ -97,7 +98,7 @@ def report_progress(session, server_url, token, agent_id, root):
         session.post(server_url.rstrip('/') + '/api/agent/update-status',
                      headers={'X-Agent-Token': token}, timeout=(4, 10), allow_redirects=False,
                      json={'agent_id': agent_id, 'agent_version': AGENT_VERSION, 'update_supported': True,
-                           'update_protocol': 2, 'update_status': status}).raise_for_status()
+                           'update_protocol': SERVICE_PROTOCOL, 'update_status': status}).raise_for_status()
     except (OSError, ValueError, requests.RequestException):
         logger.warning('Não foi possível informar o andamento da atualização ao servidor.')
 
@@ -106,7 +107,7 @@ def begin_update(session, server_url, token, agent_id, config_file):
     global next_attempt
     root = installed_root()
     offer = pending_offer
-    if not root or not offer or time.monotonic() < next_attempt:
+    if not root or not service_mode() or not offer or time.monotonic() < next_attempt:
         return False
     next_attempt = time.monotonic() + 300
     version = ''
@@ -114,8 +115,8 @@ def begin_update(session, server_url, token, agent_id, config_file):
     try:
         uuid.UUID(rollout)
         manifest = verify_manifest(offer['release'])
-        if manifest['format'] != 2:
-            raise ValueError('Este agente requer uma release MSI.')
+        if manifest['format'] != SERVICE_PROTOCOL:
+            raise ValueError('Este serviço requer uma release MSI por máquina (protocolo 3).')
         version = manifest['version']
         if version_tuple(version) <= version_tuple(AGENT_VERSION):
             return False
@@ -123,7 +124,9 @@ def begin_update(session, server_url, token, agent_id, config_file):
         failed_release = previous.get('status') in ('rolled_back', 'deferred') or (previous.get('status') == 'failed' and not previous.get('retryable'))
         if failed_release and previous.get('target_version') == version and previous.get('rollout_id') == rollout:
             return False
-        staging = root.parent / 'updates' / str(uuid.uuid4())
+        if installation(root).get('Mode') != 'service':
+            raise ValueError('A atualização automática exige instalação como serviço.')
+        staging = data_dir() / 'updates' / str(uuid.uuid4())
         staging.mkdir(parents=True)
         save_status(root, 'downloading', version, rollout)
         report_progress(session, server_url, token, agent_id, root)
@@ -133,15 +136,13 @@ def begin_update(session, server_url, token, agent_id, config_file):
         download_package(session, url, {'X-Agent-Token': token, 'X-Agent-ID': agent_id}, package, manifest['package']['size'])
         verify_file(package, manifest['installer'])
         verify_package(package, version)
-        startup = installation(root)['Startup']
         save_status(root, 'installing', version, rollout)
         report_progress(session, server_url, token, agent_id, root)
         installer = Path(os.environ['SystemRoot']) / 'System32' / 'msiexec.exe'
         logfile = staging / 'windows-installer.log'
         env = os.environ.copy()
         env['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
-        subprocess.Popen([str(installer), '/i', str(package), '/qn', '/norestart', '/l*v', str(logfile),
-                          'STI_PREVIOUS_PID=' + str(os.getpid()), 'STI_STARTUP=' + str(startup)], cwd=staging, env=env,
+        subprocess.Popen([str(installer), '/i', str(package), '/qn', '/norestart', '/l*v', str(logfile)], cwd=staging, env=env,
                          creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         logger.info('Atualizador iniciado para a versão %s.', version)
         return True
