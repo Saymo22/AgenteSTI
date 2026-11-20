@@ -1,5 +1,6 @@
 """Releases, assinatura e recuperação em diretórios temporários, sem registrar o Windows."""
 import io
+import base64
 import json
 import os
 import uuid
@@ -174,6 +175,40 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/releases').json['releases'], [])
         self.assertEqual(self.client.post('/api/releases', data={'release': (io.BytesIO(b'invalid'), 'bad.sti')}).status_code, 400)
 
+    def test_valid_signature_with_future_format_reports_server_compatibility(self):
+        bundle, envelope = self.bundle('3.5.3', msi=True)
+        envelope['manifest']['format'] = 99
+        key = serialization.load_pem_private_key(self.key_file.read_bytes(),password=None)
+        envelope['signature'] = base64.b64encode(key.sign(protocol.canonical_json(envelope['manifest']))).decode('ascii')
+        raw = io.BytesIO()
+        with zipfile.ZipFile(bundle) as source, zipfile.ZipFile(raw,'w') as target:
+            for name in source.namelist():
+                target.writestr(name,json.dumps(envelope) if name=='manifest.json' else source.read(name))
+        response = self.client.post('/api/releases',data={'release':(io.BytesIO(raw.getvalue()),'future.sti')})
+        self.assertEqual(response.status_code,400)
+        self.assertIn('Atualize o servidor STI',response.json['error'])
+        self.assertIn('Assinatura STI válida',response.json['error'])
+        self.assertEqual(self.client.get('/api/releases').json['releases'],[])
+
+    def test_tampered_format_is_rejected_by_signature_before_compatibility(self):
+        _, envelope = self.bundle()
+        envelope['manifest']['format'] = 99
+        with self.assertRaisesRegex(ValueError,'Assinatura da release não reconhecida'):
+            protocol.verify_manifest(envelope)
+
+    def test_other_signing_key_is_not_accepted(self):
+        _, envelope = self.bundle()
+        other = self.folder/'other-public.pem'
+        other.write_bytes(Ed25519PrivateKey.generate().public_key().public_bytes(
+            serialization.Encoding.PEM,serialization.PublicFormat.SubjectPublicKeyInfo))
+        with self.assertRaisesRegex(ValueError,'assinad[oa] com outra chave'):
+            protocol.verify_manifest(envelope,public_key_file=other)
+
+    def test_missing_public_key_reports_server_configuration(self):
+        _, envelope = self.bundle()
+        with self.assertRaisesRegex(ValueError,'chave pública STI'):
+            protocol.verify_manifest(envelope,public_key_file=self.folder/'missing.pem')
+
     def test_published_versions_are_immutable_and_upload_does_not_expand_telemetry_limit(self):
         self.publish()
         bundle, _ = self.bundle(content=b'MZ-different-agent')
@@ -238,23 +273,25 @@ class ReleaseTests(unittest.TestCase):
 
     def test_msi_handoff_uses_windows_installer_without_exposing_token(self):
         self.root.mkdir(parents=True)
-        _, envelope = self.bundle(version='3.5.1', msi=True)
+        _, envelope = self.bundle(version='3.5.3', msi=True)
         offer = {'release': envelope, 'rollout_id': str(uuid.uuid4())}
         def download(session, url, headers, path, size):
             Path(path).write_bytes(b'MZ-fixture-installer')
-        with patch.object(atualizacao, 'AGENT_VERSION', '3.5.0'), \
+        with patch.object(atualizacao, 'AGENT_VERSION', '3.5.2'), \
+             patch.object(atualizacao, 'service_mode', return_value=True), \
+             patch.object(atualizacao, 'data_dir', return_value=self.root.parent), \
              patch.object(atualizacao, 'installed_root', return_value=self.root), \
              patch.object(atualizacao, 'pending_offer', offer), patch.object(atualizacao, 'next_attempt', 0), \
              patch.object(atualizacao, 'report_progress'), patch.object(atualizacao, 'download_package', side_effect=download), \
              patch.object(atualizacao, 'verify_package') as verify, \
-             patch.object(atualizacao, 'installation', return_value={'Startup': '0'}), \
+             patch.object(atualizacao, 'installation', return_value={'Startup': '1', 'Mode':'service'}), \
              patch.object(atualizacao.subprocess, 'Popen') as launch:
             self.assertTrue(atualizacao.begin_update(Mock(), 'http://example.test', 'private-token',
                             self.payload['agent_id'], self.root/'sti-config.json'))
             arguments = launch.call_args.args[0]
             self.assertEqual(Path(arguments[0]).name, 'msiexec.exe')
             self.assertIn('/qn', arguments)
-            self.assertIn('STI_STARTUP=0', arguments)
+            self.assertNotIn('STI_STARTUP=0', arguments)
             self.assertNotIn('private-token', str(launch.call_args))
             verify.assert_called_once()
             self.assertEqual(list(self.root.parent.rglob('STI_Update.exe')), [])
@@ -273,9 +310,12 @@ class ReleaseTests(unittest.TestCase):
 
     def test_transient_download_failure_can_retry_after_backoff(self):
         self.root.mkdir(parents=True)
-        _, envelope = self.bundle(msi=True)
+        _, envelope = self.bundle(version='3.5.3', msi=True)
         offer = {'release': envelope, 'rollout_id': str(uuid.uuid4())}
-        with patch.object(atualizacao, 'AGENT_VERSION', '3.4.0'), \
+        with patch.object(atualizacao, 'AGENT_VERSION', '3.5.2'), \
+             patch.object(atualizacao, 'service_mode', return_value=True), \
+             patch.object(atualizacao, 'data_dir', return_value=self.root.parent), \
+             patch.object(atualizacao, 'installation', return_value={'Mode':'service'}), \
              patch.object(atualizacao, 'installed_root', return_value=self.root), patch.object(atualizacao, 'pending_offer', offer), \
              patch.object(atualizacao, 'next_attempt', 0), patch.object(atualizacao, 'report_progress'), \
              patch.object(atualizacao, 'download_package', side_effect=fixtures.requests.ConnectionError('offline')) as download, \
@@ -285,3 +325,25 @@ class ReleaseTests(unittest.TestCase):
             atualizacao.next_attempt = 0
             self.assertFalse(atualizacao.begin_update(Mock(), 'http://example.test', 'token', self.payload['agent_id'], self.root/'sti-config.json'))
             self.assertEqual(download.call_count, 2)
+
+    def test_machine_release_never_offered_to_user_agent(self):
+        bundle, envelope = self.bundle(version='3.5.2', msi=True)
+        self.assertEqual(envelope['manifest']['format'], 3)
+        response = self.client.post('/api/releases', data={'release': (io.BytesIO(bundle.read_bytes()), 'release.sti')})
+        self.assertEqual(response.status_code, 201, response.json)
+        self.assertEqual(self.client.post('/api/releases/activate', json={'version':'3.5.2'}).status_code, 200)
+        self.assertIsNone(self.heartbeat(agent_version='3.5.1',update_protocol=2).json['update'])
+        self.assertIsNone(self.heartbeat(agent_version='3.4.0',update_protocol=1).json['update'])
+        self.assertEqual(self.heartbeat(agent_version='3.5.1',update_protocol=3).json['update']['release'], envelope)
+        response = self.client.get('/api/releases/3.5.2/installer')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('.msi', response.headers['Content-Disposition'])
+        response.close()
+
+    def test_user_execution_cannot_start_elevated_service_update(self):
+        with patch.object(atualizacao, 'installed_root', return_value=self.root), \
+             patch.object(atualizacao, 'service_mode', return_value=False), \
+             patch.object(atualizacao.subprocess, 'Popen') as launch:
+            self.assertFalse(atualizacao.begin_update(Mock(), 'http://example.test', 'token', self.payload['agent_id'], self.root/'config.json'))
+            self.assertFalse(atualizacao.update_report()['update_supported'])
+            launch.assert_not_called()

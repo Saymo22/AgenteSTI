@@ -78,6 +78,9 @@ function releaseDeviceStatus(device, report = {}) {
   const expected = releaseState.policy?.version || releaseState.reference;
   const comparison = compareAgentVersions(device.agent_version, expected);
   if (comparison !== null && comparison >= 0) return {key: 'current', label: comparison === 0 ? 'Atualizado' : 'Versão superior'};
+  if (compareAgentVersions(expected, '3.5.2') >= 0 && compareAgentVersions(device.agent_version, '3.5.2') < 0) {
+    return {key: 'manual', label: 'Migração para serviço exige administrador'};
+  }
   if (!report.supported) return {key: 'manual', label: 'Instalador inicial necessário'};
   if (releaseState.policy?.scope === 'selected' && !releaseState.policy.device_ids.includes(device.device_id)) return {key: 'pending', label: 'Fora do grupo de teste'};
   return {key: 'pending', label: releaseState.policy ? 'Atualização disponível' : 'Aguardando liberação'};

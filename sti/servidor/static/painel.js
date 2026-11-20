@@ -932,7 +932,7 @@ function renderLogs() {
 
       document.getElementById('modalUptimeValue').textContent = formatUptime(hw.uptime);
       document.getElementById('modalPrintersField').textContent = !device.agent_online ? 'Aguardando agente' : Array.isArray(hw.printers) && hw.printers.length ? hw.printers.join(', ') : 'Nenhuma informada';
-      document.getElementById('modalAgentField').textContent = `${device.agent_online ? 'Conectado' : 'Sem comunicação recente'} • ${device.agent_version || 'Versão não informada'}`;
+      document.getElementById('modalAgentField').textContent = `${device.agent_online ? 'Conectado' : 'Sem comunicação recente'} • ${device.agent_version || 'Versão não informada'}${device.agent_mode === 'service' ? ' • Serviço do Windows' : device.agent_mode === 'user' ? ' • Sessão do usuário' : ''}`;
       for (const [id, command] of [['btnChat', 'msg'], ['btnRestart', 'restart'], ['btnShutdown', 'shutdown']]) {
         const button = document.getElementById(id);
         button.disabled = !device.agent_online || !(device.capabilities || []).includes(command);

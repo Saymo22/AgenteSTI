@@ -96,6 +96,13 @@ test('internet antiga, agente offline e versão anterior mostram não verificado
   assert.match(nodes.get('modalInternetDetail').textContent,/3.5.1/);
 });
 
+test('release de serviço informa migração administrativa para versões por usuário', () => {
+  const {run}=loadPanel();
+  run(`releaseState.reference='3.5.2';releaseState.policy=null;`);
+  assert.equal(run("releaseDeviceStatus({agent_version:'3.5.1',agent_online:true},{supported:true}).label"),'Migração para serviço exige administrador');
+  assert.equal(run("releaseDeviceStatus({agent_version:'3.5.2',agent_online:true},{supported:true}).key"),'current');
+});
+
 function prepareTvAlerts() {
   const panel = loadPanel();
   panel.run(`globalThis.alertTimers=new Map();globalThis.timerSequence=0;

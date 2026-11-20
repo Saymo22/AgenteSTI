@@ -6,20 +6,30 @@ import subprocess
 import time
 from pathlib import Path
 
-from sti.comum.msi import REGISTRY_KEY, UPGRADE_CODE
+from sti.comum.msi import REGISTRY_KEY, upgrade_code, machine_package
 from sti.comum.releases import atomic_json, read_json
 
 
 def installation(root):
     import winreg
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY, 0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
-        values = {name: winreg.QueryValueEx(key, name)[0] for name in ('InstallDir', 'ProductCode', 'Startup')}
-    if Path(values['InstallDir']).resolve() != Path(root).resolve():
+    values = None
+    for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        try:
+            with winreg.OpenKey(hive, REGISTRY_KEY, 0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+                candidate = {name: winreg.QueryValueEx(key, name)[0] for name in ('InstallDir', 'ProductCode', 'Startup')}
+                if Path(candidate['InstallDir']).resolve() != Path(root).resolve():
+                    continue
+                candidate['Mode'] = winreg.QueryValueEx(key, 'Mode')[0] if hive == winreg.HKEY_LOCAL_MACHINE else 'user'
+                values = candidate
+                break
+        except FileNotFoundError:
+            continue
+    if values is None:
         raise ValueError('O executável não pertence à instalação MSI registrada.')
     api = ctypes.WinDLL('msi')
     api.MsiQueryProductStateW.argtypes = [ctypes.c_wchar_p]
     if api.MsiQueryProductStateW(values['ProductCode']) != 5:
-        raise ValueError('O produto MSI não está instalado para este usuário.')
+        raise ValueError('O produto MSI não está instalado neste contexto.')
     return values
 
 
@@ -68,8 +78,10 @@ def package_properties(path):
 def verify_package(path, version):
     from sti.comum.msi import product_code
     props = package_properties(path)
-    if (props.get('UpgradeCode') != UPGRADE_CODE or props.get('ProductCode') != product_code(version)
-            or props.get('ProductVersion') != version or props.get('ALLUSERS')):
+    machine = machine_package(version)
+    if (props.get('UpgradeCode') != upgrade_code(version) or props.get('ProductCode') != product_code(version)
+            or props.get('ProductVersion') != version or bool(props.get('ALLUSERS')) != machine
+            or (machine and (props.get('ALLUSERS') != '1' or props.get('STI_INSTALL_MODE') != 'service'))):
         raise ValueError('O MSI não corresponde ao produto, versão ou modo de instalação esperado.')
 
 
@@ -120,7 +132,17 @@ def launch(previous_pid='', reboot_pending=''):
 
 def entry(arguments):
     try:
-        if arguments[0] == '--msi-configure' and len(arguments) == 4:
+        if arguments[0] == '--msi-service-configure' and len(arguments) == 6:
+            from sti.agente.migracao_servico import configure_service
+            root, source, database, legacy, sid = arguments[1:]
+            configure_service(root, source, database, msi_directory(legacy), sid)
+        elif arguments == ['--msi-service-recovery']:
+            from sti.agente.migracao_servico import configure_recovery
+            configure_recovery()
+        elif arguments[0] == '--msi-service-migrate' and len(arguments) == 3:
+            from sti.agente.migracao_servico import commit_migration
+            commit_migration(msi_directory(arguments[1]), arguments[2])
+        elif arguments[0] == '--msi-configure' and len(arguments) == 4:
             configure(*arguments[1:])
         elif arguments[0] == '--msi-launch' and len(arguments) == 3:
             launch(*arguments[1:])
@@ -130,3 +152,8 @@ def entry(arguments):
     except Exception:
         logging.getLogger('STI_INSTALL').exception('A operação do Windows Installer falhou.')
         return 1
+
+
+def msi_directory(value):
+    """Remove o marcador de pasta vazia sem confundi-lo com a raiz do disco."""
+    return '' if value == '\\.' else value

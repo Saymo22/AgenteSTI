@@ -14,7 +14,7 @@ version_info = VSVersionInfo(ffi=FixedFileInfo(filevers=tuple(map(int, AGENT_VER
         StringStruct('OriginalFilename', 'STI_Agente.exe')])]), VarFileInfo([VarStruct('Translation', [1033, 1200])])])
 key = PROJECT_ROOT / 'sti/comum/release-public-key.pem'
 a = Analysis([str(PROJECT_ROOT / 'agente.py')], pathex=[str(PROJECT_ROOT)],
-    binaries=[], datas=[(str(key), 'sti/comum')], hiddenimports=['win32print', 'win32ts'],
+    binaries=[], datas=[(str(key), 'sti/comum')], hiddenimports=['win32print', 'win32ts', 'servicemanager', 'win32service', 'win32serviceutil', 'win32timezone'],
     hookspath=[], hooksconfig={}, runtime_hooks=[], excludes=[], noarchive=False, optimize=0)
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], name='STI_Agente',

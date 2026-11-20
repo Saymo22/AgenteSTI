@@ -274,6 +274,14 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(self.heartbeat({**self.payload,'internet':report}).status_code, 400)
         self.assertIsNone(server.devices[self.ip]['hw']['internet'])
 
+    def test_service_reports_execution_mode_without_logged_in_user(self):
+        self.assertEqual(self.heartbeat({**self.payload,'agent_mode':'service','user':''}).status_code,200)
+        item = self.client.get('/api/devices').json['devices'][0]
+        self.assertEqual(item['agent_mode'],'service')
+        self.assertEqual(item['user'],'')
+        self.assertTrue(item['agent_online'])
+        self.assertEqual(self.heartbeat({**self.payload,'agent_mode':'invalid'}).status_code,400)
+
     def test_invalid_metrics_rejected_without_overwriting(self):
         self.heartbeat()
         for field, value in (("cpu", 101), ("cpu", True), ("cpu", "abc"), ("ram_free", 100),

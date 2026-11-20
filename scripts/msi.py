@@ -1,10 +1,9 @@
-"""Autor do MSI por usuário. Requer Windows e Python 3.12 (msilib)."""
+"""MSI x64 por máquina; serviço instalado e controlado pelas tabelas nativas."""
 import uuid
 from pathlib import Path
 
-from sti.comum.msi import UPGRADE_CODE, REGISTRY_KEY, product_code, msi_version
-
-RUN_VALUE = 'AgenteSTI'
+from sti.comum.msi import SERVICE_UPGRADE_CODE, REGISTRY_KEY, product_code, msi_version
+from sti.comum.servico import SERVICE_NAME, SERVICE_DISPLAY_NAME
 
 
 def build_msi(agent, destination, version):
@@ -19,67 +18,68 @@ def build_msi(agent, destination, version):
     db = msilib.init_database(str(destination), schema, 'STI Agente', product_code(version), version, 'STI')
     summary = db.GetSummaryInformation(20)
     summary.SetProperty(7, 'x64;1033')
-    summary.SetProperty(15, 10)  # compressed, per-user, no elevation
+    summary.SetProperty(15, 2)  # compressed; instalação elevada por máquina
     summary.Persist()
     msilib.add_tables(db, sequence)
     add = lambda table, rows: msilib.add_data(db, table, rows)
-    add('Property', [('UpgradeCode', UPGRADE_CODE), ('STI_STARTAGENT', '1'),
-                     ('ARPNOMODIFY', '1'), ('ARPURLINFOABOUT', 'https://github.com/Saymo22/AgenteSTI'),
-                     ('REINSTALLMODE', 'amus')])
-    add('Directory', [('TARGETDIR', None, 'SourceDir'), ('LocalAppDataFolder', 'TARGETDIR', '.'),
-                      ('STIDIR', 'LocalAppDataFolder', 'STI'), ('INSTALLDIR', 'STIDIR', 'Agent')])
-    guid = lambda name: '{' + str(uuid.uuid5(uuid.UUID(UPGRADE_CODE), name)).upper() + '}'
+    add('Property', [('UpgradeCode', SERVICE_UPGRADE_CODE), ('ALLUSERS', '1'), ('STI_INSTALL_MODE', 'service'),
+        ('ARPNOMODIFY', '1'), ('ARPURLINFOABOUT', 'https://github.com/Saymo22/AgenteSTI'),
+        ('SecureCustomProperties', 'STI_CONFIGFILE;STI_LEGACYDIR;STI_USERSID;STI_OLDPRODUCTS;STI_NEWERPRODUCTS'),
+        ('REINSTALLMODE', 'amus'), ('MsiLogging', 'voicewarmup')])
+    add('Directory', [('TARGETDIR', None, 'SourceDir'), ('ProgramFiles64Folder', 'TARGETDIR', '.'),
+        ('STIVENDOR', 'ProgramFiles64Folder', 'STI'), ('INSTALLDIR', 'STIVENDOR', 'AgentService')])
+    guid = lambda name: '{' + str(uuid.uuid5(uuid.UUID(SERVICE_UPGRADE_CODE), name)).upper() + '}'
     add('Component', [('AgentComponent', guid('agent'), 'INSTALLDIR', 256, None, 'AgentExe'),
-                      ('MarkerComponent', guid('marker'), 'INSTALLDIR', 260, None, 'InstallDirRegistry'),
-                      ('StartupComponent', guid('startup'), 'INSTALLDIR', 324, 'STI_STARTUP="1"', 'StartupRegistry')])
-    add('Feature', [('AgentFeature', None, 'STI Agente', 'Inventário de equipamentos STI', 1, 1, 'INSTALLDIR', 0)])
-    add('FeatureComponents', [('AgentFeature', component) for component in ('AgentComponent', 'MarkerComponent', 'StartupComponent')])
+        ('MarkerComponent', guid('marker'), 'INSTALLDIR', 260, None, 'InstallDirRegistry')])
+    add('Feature', [('AgentFeature', None, 'STI Agente', 'Serviço de inventário e monitoramento STI', 1, 1, 'INSTALLDIR', 0)])
+    add('FeatureComponents', [('AgentFeature', name) for name in ('AgentComponent', 'MarkerComponent')])
     cab = msilib.CAB('AgentCab')
     index, identifier = cab.append(str(agent), 'STI_Agente.exe', 'AgentExe')
-    add('File', [(identifier, 'AgentComponent', 'AGENTE.EXE|STI_Agente.exe', agent.stat().st_size, version + '.0', None, 512, index)])
-    add('Registry', [('InstallDirRegistry', 1, REGISTRY_KEY, 'InstallDir', '[INSTALLDIR]', 'MarkerComponent'),
-                     ('ProductRegistry', 1, REGISTRY_KEY, 'ProductCode', '[ProductCode]', 'MarkerComponent'),
-                     ('VersionRegistry', 1, REGISTRY_KEY, 'Version', '[ProductVersion]', 'MarkerComponent'),
-                     ('PreferenceRegistry', 1, REGISTRY_KEY, 'Startup', '[STI_STARTUP]', 'MarkerComponent'),
-                     ('StartupRegistry', 1, r'Software\Microsoft\Windows\CurrentVersion\Run', RUN_VALUE,
-                      '"[INSTALLDIR]STI_Agente.exe"', 'StartupComponent')])
-    # Clear the previous custom startup value before writing the MSI-managed preference.
-    add('RemoveRegistry', [('LegacyStartup', 1, r'Software\Microsoft\Windows\CurrentVersion\Run', RUN_VALUE, 'MarkerComponent')])
-    add('RemoveFile', [(f'LegacyFile{index}', 'MarkerComponent', name, 'INSTALLDIR', 1)
-                       for index, name in enumerate(('STI_Agente_Setup.exe', 'previous-agent.exe', 'incoming-agent.exe', 'installation.json'))])
-    add('RegLocator', [('StartupSearch', 1, REGISTRY_KEY, 'Startup', 2 | 16),
-                       ('DirectorySearch', 1, REGISTRY_KEY, 'InstallDir', 2 | 16)])
-    add('AppSearch', [('STI_PREVIOUS_STARTUP', 'StartupSearch'), ('INSTALLDIR', 'DirectorySearch')])
-    add('Upgrade', [(UPGRADE_CODE, None, version, None, 1, None, 'STI_OLDPRODUCTS'),
-                    (UPGRADE_CODE, version, None, None, 2, None, 'STI_NEWERPRODUCTS')])
+    add('File', [(identifier, 'AgentComponent', 'AGENTE.EXE|STI_Agente.exe', agent.stat().st_size, version+'.0', None, 512, index)])
+    add('Registry', [('InstallDirRegistry', 2, REGISTRY_KEY, 'InstallDir', '[INSTALLDIR]', 'MarkerComponent'),
+        ('ProductRegistry', 2, REGISTRY_KEY, 'ProductCode', '[ProductCode]', 'MarkerComponent'),
+        ('VersionRegistry', 2, REGISTRY_KEY, 'Version', '[ProductVersion]', 'MarkerComponent'),
+        ('ModeRegistry', 2, REGISTRY_KEY, 'Mode', 'service', 'MarkerComponent'),
+        ('PreferenceRegistry', 2, REGISTRY_KEY, 'Startup', '1', 'MarkerComponent')])
+    add('RegLocator', [('MachineDirectory', 2, REGISTRY_KEY, 'InstallDir', 2 | 16),
+                       ('LegacyDirectory', 1, REGISTRY_KEY, 'InstallDir', 2 | 16)])
+    add('AppSearch', [('INSTALLDIR', 'MachineDirectory'), ('STI_LEGACYDIR', 'LegacyDirectory')])
+    # Escopo separado: um MSI por usuário não é removido dentro da transação SYSTEM.
+    add('Upgrade', [(SERVICE_UPGRADE_CODE, None, version, None, 1, None, 'STI_OLDPRODUCTS'),
+                   (SERVICE_UPGRADE_CODE, version, None, None, 2, None, 'STI_NEWERPRODUCTS')])
     add('LaunchCondition', [('VersionNT64', 'O STI Agente requer Windows de 64 bits.'),
-                            ('NOT STI_NEWERPRODUCTS', 'Uma versão mais recente já está instalada.')])
-    add('CustomAction', [('PreviousStartup', 51, 'STI_STARTUP', '[STI_PREVIOUS_STARTUP]'),
-                         ('DefaultStartup', 51, 'STI_STARTUP', '1'),
-                         ('ConfigureAgent', 1042, 'AgentExe', '--msi-configure "[INSTALLDIR]." "[STI_CONFIGFILE]" "[OriginalDatabase]"'),
-                         ('LaunchAgent', 18, 'AgentExe', '--msi-launch "[STI_PREVIOUS_PID]" "[ReplacedFilesInUse]"')])
-    # Validate and install the new payload before removing the old product.
-    # Stable component GUIDs preserve shared files during the late major upgrade.
-    view = db.OpenView("UPDATE `InstallExecuteSequence` SET `Sequence`=6550 WHERE `Action`='RemoveExistingProducts'")
-    view.Execute(None)
-    view = db.OpenView("UPDATE `InstallExecuteSequence` SET `Sequence`=1390 WHERE `Action`='LaunchConditions'")
-    view.Execute(None)
-    add('InstallExecuteSequence', [('PreviousStartup', 'NOT STI_STARTUP AND STI_PREVIOUS_STARTUP', 410),
-                                  ('DefaultStartup', 'NOT STI_STARTUP', 420),
-                                  ('ConfigureAgent', 'NOT REMOVE~="ALL"', 4100),
-                                  ('InstallExecute', None, 6500),
-                                  ('LaunchAgent', 'NOT REMOVE~="ALL" AND STI_STARTAGENT="1"', 6701)])
-    add('InstallUISequence', [('PreviousStartup', 'NOT STI_STARTUP AND STI_PREVIOUS_STARTUP', 410),
-                             ('DefaultStartup', 'NOT STI_STARTUP', 420), ('ConfigurationDialog', 'NOT REMOVE~="ALL"', 1290)])
-    dialog = msilib.Dialog(db, 'ConfigurationDialog', 50, 50, 380, 210, 3, 'STI Agente [ProductVersion]', 'ConfigPath', 'Install', 'Cancel')
-    dialog.text('Title', 20, 12, 340, 20, 3, 'Instalar ou atualizar o STI Agente')
-    dialog.text('Help', 20, 40, 340, 38, 3, 'Na primeira instalação, deixe agent-config.json ao lado do MSI ou informe seu caminho abaixo. A configuração existente será preservada.')
-    dialog.control('ConfigPath', 'Edit', 20, 84, 340, 20, 3, 'STI_CONFIGFILE', None, 'Startup', None)
-    dialog.radiogroup('Startup', 20, 114, 340, 38, 3, 'STI_STARTUP', None, 'Install')
-    add('RadioButton', [('STI_STARTUP', 1, '1', 0, 0, 330, 16, 'Iniciar automaticamente ao entrar no Windows', None),
-                        ('STI_STARTUP', 2, '0', 0, 19, 330, 16, 'Iniciar manualmente', None)])
-    dialog.pushbutton('Install', 200, 166, 78, 22, 3, 'Instalar', 'Cancel').event('EndDialog', 'Return')
-    dialog.pushbutton('Cancel', 284, 166, 78, 22, 3, 'Cancelar', 'ConfigPath').event('EndDialog', 'Exit')
+                           ('NOT STI_NEWERPRODUCTS', 'Uma versão mais recente já está instalada.')])
+    add('ServiceInstall', [('AgentService', SERVICE_NAME, SERVICE_DISPLAY_NAME, 16, 2, 32769,
+        None, None, None, None, '--service', 'AgentComponent',
+        'Inventário e monitoramento STI, inclusive sem usuário conectado.')])
+    add('ServiceControl', [('AgentServiceControl', SERVICE_NAME, 163, None, 1, 'AgentComponent')])
+    add('CustomAction', [('CaptureUserSid', 51, 'STI_USERSID', '[UserSID]'),
+        # A barra final do InstallDir antigo escapava a aspa no parser do Windows.
+        # O sufixo \\. mantém diretórios com ou sem barra final como um único argumento.
+        ('ConfigureService', 3090, 'AgentExe', '--msi-service-configure "[INSTALLDIR]." "[STI_CONFIGFILE]" "[OriginalDatabase]" "[STI_LEGACYDIR]\\." "[STI_USERSID]"'),
+        ('ConfigureRecovery', 3090, 'AgentExe', '--msi-service-recovery'),
+        ('CommitMigration', 2578, 'AgentExe', '--msi-service-migrate "[STI_LEGACYDIR]\\." "[STI_USERSID]"')])
+    for action, number in [('RemoveExistingProducts', 1550), ('LaunchConditions', 1390)]:
+        view = db.OpenView(f"UPDATE `InstallExecuteSequence` SET `Sequence`={number} WHERE `Action`='{action}'")
+        view.Execute(None)
+        view.Close()
+    add('InstallExecuteSequence', [('CaptureUserSid', 'NOT STI_USERSID', 430),
+        ('ConfigureService', 'NOT REMOVE~="ALL"', 4100),
+        ('ConfigureRecovery', 'NOT REMOVE~="ALL"', 5850),
+        ('CommitMigration', 'NOT REMOVE~="ALL" AND STI_LEGACYDIR', 6100)])
+    add('InstallUISequence', [('CaptureUserSid', 'NOT STI_USERSID', 430),
+        ('ConfigurationDialog', 'NOT REMOVE~="ALL"', 1290)])
+    dialog = msilib.Dialog(db, 'ConfigurationDialog', 50, 50, 400, 250, 3,
+        'STI Agente [ProductVersion]', 'ConfigPath', 'Install', 'Cancel')
+    dialog.text('Title', 20, 12, 360, 20, 3, 'Instalar o serviço de monitoramento STI')
+    dialog.text('Help', 20, 40, 360, 48, 3,
+        'Funciona antes do login e após sair do Windows. Requer autorização de administrador. Informe agent-config.json ou deixe o arquivo ao lado do MSI.')
+    dialog.control('ConfigPath', 'Edit', 20, 92, 360, 20, 3, 'STI_CONFIGFILE', None, 'LegacyPath', None)
+    dialog.text('LegacyHelp', 20, 122, 360, 30, 3,
+        'Migrar instalação anterior: confirme a pasta do agente do usuário. Deixe vazio para instalação nova.')
+    dialog.control('LegacyPath', 'Edit', 20, 156, 360, 20, 3, 'STI_LEGACYDIR', None, 'Install', None)
+    dialog.pushbutton('Install', 210, 200, 78, 24, 3, 'Instalar', 'Cancel').event('EndDialog', 'Return')
+    dialog.pushbutton('Cancel', 298, 200, 78, 24, 3, 'Cancelar', 'ConfigPath').event('EndDialog', 'Exit')
     cab.commit(db)
     db.Commit()
     return destination
